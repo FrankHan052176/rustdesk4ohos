@@ -1,10 +1,14 @@
+#[cfg(not(target_env = "ohos"))]
 use docopt::Docopt;
+#[cfg(not(target_env = "ohos"))]
 use hbb_common::{
     env_logger::{init_from_env, Env, DEFAULT_FILTER_ENV},
     log, tokio,
 };
+#[cfg(not(target_env = "ohos"))]
 use librustdesk::{ipc::Data, *};
 
+#[cfg(not(target_env = "ohos"))]
 const USAGE: &'static str = "
 IPC test program.
 
@@ -19,6 +23,7 @@ Options:
   -p --postfix=<str>    IPC path postfix [default: ].
 ";
 
+#[cfg(not(target_env = "ohos"))]
 #[derive(Debug, serde::Deserialize)]
 struct Args {
     flag_server: bool,
@@ -26,6 +31,12 @@ struct Args {
     flag_postfix: String,
 }
 
+#[cfg(target_env = "ohos")]
+fn main() {
+    eprintln!("The IPC example is unsupported on OpenHarmony.");
+}
+
+#[cfg(not(target_env = "ohos"))]
 #[tokio::main]
 async fn main() {
     init_from_env(Env::default().filter_or(DEFAULT_FILTER_ENV, "info"));
@@ -57,6 +68,7 @@ async fn main() {
     }
 }
 
+#[cfg(not(target_env = "ohos"))]
 async fn ipc_server(postfix: &str) {
     let postfix = postfix.to_string();
     let postfix2 = postfix.clone();
@@ -70,6 +82,7 @@ async fn ipc_server(postfix: &str) {
     ipc_client(&postfix2).await;
 }
 
+#[cfg(not(target_env = "ohos"))]
 async fn ipc_client(postfix: &str) {
     loop {
         match crate::ipc::connect(1000, postfix).await {

@@ -8,7 +8,7 @@ use std::{
 use bytes::Bytes;
 
 pub use connection::*;
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[cfg(not(any(target_os = "android", target_os = "ios", target_env = "ohos")))]
 use hbb_common::config::Config2;
 use hbb_common::tcp::{self, new_listener};
 use hbb_common::{
@@ -25,7 +25,7 @@ use hbb_common::{
     timeout, tokio, ResultType, Stream,
 };
 use scrap::camera;
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[cfg(not(any(target_os = "android", target_os = "ios", target_env = "ohos")))]
 use service::ServiceTmpl;
 use service::{EmptyExtraFieldService, GenericService, Service, Subscriber};
 use video_service::VideoSource;
@@ -38,19 +38,19 @@ pub mod terminal_helper;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub mod terminal_service;
 cfg_if::cfg_if! {
-if #[cfg(not(target_os = "ios"))] {
+if #[cfg(not(any(target_os = "ios", target_env = "ohos")))] {
 mod clipboard_service;
 #[cfg(target_os = "android")]
 pub use clipboard_service::is_clipboard_service_ok;
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(target_env = "ohos")))]
 pub(crate) mod wayland;
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(target_env = "ohos")))]
 pub mod uinput;
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(target_env = "ohos")))]
 pub mod rdp_input;
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(target_env = "ohos")))]
 pub mod dbus;
-#[cfg(not(target_os = "android"))]
+#[cfg(not(any(target_os = "android", target_env = "ohos")))]
 pub mod input_service;
 } else {
 mod clipboard_service {
@@ -122,7 +122,7 @@ pub fn new() -> ServerPtr {
         id_count: hbb_common::rand::random::<i32>() % 1000 + 1000, // ensure positive
     };
     server.add_service(Box::new(audio_service::new()));
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "ios", target_env = "ohos")))]
     {
         server.add_service(Box::new(display_service::new()));
         server.add_service(Box::new(clipboard_service::new(
@@ -133,7 +133,7 @@ pub fn new() -> ServerPtr {
             clipboard_service::FILE_NAME.to_owned(),
         )));
     }
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    #[cfg(not(any(target_os = "android", target_os = "ios", target_env = "ohos")))]
     {
         if !display_service::capture_cursor_embedded() {
             server.add_service(Box::new(input_service::new_cursor()));
