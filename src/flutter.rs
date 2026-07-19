@@ -581,13 +581,13 @@ impl FlutterHandler {
                 }
             }
             if push {
+                #[cfg(not(target_env = "ohos"))]
                 if let Some(stream) = &session.event_stream {
                     stream.add(EventToUI::Event(out.clone()));
-                } else {
-                    #[cfg(target_env = "ohos")]
-                    {
-                        crate::platform::ohos::emit_session_event(sid, EventToUI::Event(out.clone()));
-                    }
+                }
+                #[cfg(target_env = "ohos")]
+                {
+                    crate::platform::ohos::emit_session_event(sid, EventToUI::Event(out.clone()));
                 }
             }
         }
@@ -1255,16 +1255,16 @@ impl FlutterHandler {
                     continue;
                 }
             }
+            #[cfg(not(target_env = "ohos"))]
             if let Some(stream) = &session.event_stream {
                 is_sent |= stream.add(EventToUI::Rgba(display));
-            } else {
-                #[cfg(target_env = "ohos")]
-                {
-                    is_sent |= crate::platform::ohos::emit_session_event(
-                        session_id,
-                        EventToUI::Rgba(display),
-                    );
-                }
+            }
+            #[cfg(target_env = "ohos")]
+            {
+                is_sent |= crate::platform::ohos::emit_session_event(
+                    session_id,
+                    EventToUI::Rgba(display),
+                );
             }
         }
         // We need `is_sent` here. Because we use texture render for multi-displays session.
@@ -1472,13 +1472,13 @@ pub fn session_start_(
 
 #[inline]
 fn try_send_close_event(event_stream: &Option<StreamSink<EventToUI>>, session_id: &SessionID) {
+    #[cfg(not(target_env = "ohos"))]
     if let Some(stream) = &event_stream {
         stream.add(EventToUI::Event("close".to_owned()));
-    } else {
-        #[cfg(target_env = "ohos")]
-        {
-            crate::platform::ohos::emit_session_event(session_id, EventToUI::Event("close".to_owned()));
-        }
+    }
+    #[cfg(target_env = "ohos")]
+    {
+        crate::platform::ohos::emit_session_event(session_id, EventToUI::Event("close".to_owned()));
     }
 }
 
@@ -1532,6 +1532,36 @@ pub fn send_clipboard_msg(msg: Message, _is_file: bool) {
             s.send(Data::Message(msg.clone()));
         }
     }
+}
+
+#[cfg(target_env = "ohos")]
+pub fn session_send_text_clipboard(session_id: &SessionID, content: String) -> ResultType<()> {
+    let Some(session) = sessions::get_session_by_session_id(session_id) else {
+        bail!("No session with id {}", session_id);
+    };
+    if !session.is_default() {
+        bail!("Clipboard is only available for remote-control sessions");
+    }
+    if !session.is_text_clipboard_required() {
+        bail!("Clipboard synchronization is disabled by the current session permissions");
+    }
+
+    let plain = content.into_bytes();
+    let compressed = hbb_common::compress::compress(&plain);
+    let (compress, content) = if compressed.len() < plain.len() {
+        (true, compressed)
+    } else {
+        (false, plain)
+    };
+    let mut msg = Message::new();
+    msg.set_clipboard(Clipboard {
+        compress,
+        content: content.into(),
+        format: ClipboardFormat::Text.into(),
+        ..Default::default()
+    });
+    session.send(Data::Message(msg));
+    Ok(())
 }
 
 // Server Side

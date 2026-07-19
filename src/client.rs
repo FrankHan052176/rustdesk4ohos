@@ -10,6 +10,9 @@ use cpal::{
     Device, Host, StreamConfig,
 };
 use crossbeam_queue::ArrayQueue;
+#[cfg(target_env = "ohos")]
+use crate::ohos_opus::{Channels::*, Decoder as AudioDecoder};
+#[cfg(not(target_env = "ohos"))]
 use magnum_opus::{Channels::*, Decoder as AudioDecoder};
 #[cfg(all(not(target_os = "linux"), not(target_env = "ohos")))]
 use ringbuf::{ring_buffer::RbBase, Rb};

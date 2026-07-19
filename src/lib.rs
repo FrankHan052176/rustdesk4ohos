@@ -11,6 +11,8 @@ pub use platform::{
 mod server;
 #[cfg(all(not(target_os = "ios"), not(target_env = "ohos")))]
 pub use self::server::*;
+#[cfg(target_env = "ohos")]
+mod ohos_opus;
 mod client;
 mod lan;
 #[cfg(not(any(target_os = "ios", target_env = "ohos")))]
@@ -30,7 +32,10 @@ pub mod ipc;
 pub mod ui;
 mod version;
 pub use version::*;
-#[cfg(any(target_os = "android", target_os = "ios", feature = "flutter"))]
+#[cfg(all(
+    any(target_os = "android", target_os = "ios", feature = "flutter"),
+    not(target_env = "ohos")
+))]
 mod bridge_generated;
 #[cfg(any(target_os = "android", target_os = "ios", feature = "flutter"))]
 pub mod flutter;

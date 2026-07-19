@@ -249,6 +249,11 @@ pub fn session_send2fa(session_id: SessionID, code: String, trust_this_device: b
     }
 }
 
+#[cfg(target_env = "ohos")]
+pub fn session_send_text_clipboard(session_id: SessionID, content: String) -> ResultType<()> {
+    flutter::session_send_text_clipboard(&session_id, content)
+}
+
 pub fn session_get_enable_trusted_devices(session_id: SessionID) -> SyncReturn<bool> {
     let v = if let Some(session) = sessions::get_session_by_session_id(&session_id) {
         session.get_enable_trusted_devices()
@@ -1129,6 +1134,10 @@ pub fn main_get_lan_peers() -> String {
     serde_json::to_string(&get_lan_peers()).unwrap_or_default()
 }
 
+pub fn main_get_lan_peers_full() -> String {
+    serde_json::to_string(&config::LanPeers::load().peers).unwrap_or_default()
+}
+
 pub fn main_get_connect_status() -> String {
     #[cfg(not(any(target_os = "android", target_os = "ios", target_env = "ohos")))]
     {
@@ -1857,7 +1866,7 @@ pub fn main_start_dbus_server() {
 }
 
 pub fn main_save_ab(json: String) {
-    if json.len() > 1024 {
+    if json.len() > 1024 && !cfg!(target_env = "ohos") {
         std::thread::spawn(|| {
             config::Ab::store(json);
         });

@@ -1489,7 +1489,7 @@ impl<T: InvokeUiSession> Remote<T> {
                             target_env = "ohos"
                         )))]
                         update_clipboard(vec![cb], ClipboardSide::Client);
-                        #[cfg(target_os = "ios")]
+                        #[cfg(any(target_os = "ios", target_env = "ohos"))]
                         {
                             let content = if cb.compress {
                                 hbb_common::compress::decompress(&cb.content)
@@ -1516,7 +1516,7 @@ impl<T: InvokeUiSession> Remote<T> {
                             target_env = "ohos"
                         )))]
                         update_clipboard(_mcb.clipboards, ClipboardSide::Client);
-                        #[cfg(target_os = "ios")]
+                        #[cfg(any(target_os = "ios", target_env = "ohos"))]
                         {
                             if let Some(cb) = _mcb
                                 .clipboards
