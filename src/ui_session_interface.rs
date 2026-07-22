@@ -1051,9 +1051,9 @@ impl<T: InvokeUiSession> Session<T> {
     ) {
         let key = rdev::usb_hid_key_from_code(usb_hid as _);
 
-        #[cfg(any(target_os = "android", target_os = "ios"))]
+        #[cfg(any(target_os = "android", target_os = "ios", target_env = "ohos"))]
         let position_code: KeyCode = 0;
-        #[cfg(any(target_os = "android", target_os = "ios"))]
+        #[cfg(any(target_os = "android", target_os = "ios", target_env = "ohos"))]
         let platform_code: KeyCode = 0;
 
         #[cfg(target_os = "windows")]
@@ -1061,7 +1061,12 @@ impl<T: InvokeUiSession> Session<T> {
         #[cfg(target_os = "windows")]
         let position_code: KeyCode = rdev::win_scancode_from_key(key).unwrap_or(0) as _;
 
-        #[cfg(not(any(target_os = "windows", target_os = "android", target_os = "ios")))]
+        #[cfg(not(any(
+            target_os = "windows",
+            target_os = "android",
+            target_os = "ios",
+            target_env = "ohos"
+        )))]
         let position_code: KeyCode = rdev::code_from_key(key).unwrap_or(0) as _;
         #[cfg(not(any(
             target_os = "windows",
@@ -1074,7 +1079,7 @@ impl<T: InvokeUiSession> Session<T> {
         // We need to set the platform code (keysym) if is AltGr.
         // https://github.com/rustdesk/rustdesk/blob/07cf1b4db5ef2f925efd3b16b87c33ce03c94809/src/keyboard.rs#L1029
         // https://github.com/flutter/flutter/issues/153811
-        #[cfg(target_os = "linux")]
+        #[cfg(all(target_os = "linux", not(target_env = "ohos")))]
         let platform_code: u32 = position_code as _;
 
         let event_type = if down_or_up {
@@ -1097,9 +1102,9 @@ impl<T: InvokeUiSession> Session<T> {
             platform_code,
             position_code: position_code as _,
             event_type,
-            #[cfg(any(target_os = "android", target_os = "ios"))]
+            #[cfg(any(target_os = "android", target_os = "ios", target_env = "ohos"))]
             usb_hid: usb_hid as _,
-            #[cfg(not(any(target_os = "android", target_os = "ios")))]
+            #[cfg(not(any(target_os = "android", target_os = "ios", target_env = "ohos")))]
             usb_hid: 0,
             #[cfg(any(target_os = "windows", target_os = "macos"))]
             extra_data: 0,
