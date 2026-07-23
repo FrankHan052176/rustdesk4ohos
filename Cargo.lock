@@ -2587,7 +2587,7 @@ dependencies = [
  "log",
  "objc",
  "pkg-config",
- "rdev",
+ "rdev 0.5.0-2 (git+https://github.com/rustdesk-org/rdev)",
  "serde 1.0.228",
  "serde_derive",
  "tfc",
@@ -4594,8 +4594,7 @@ dependencies = [
 [[package]]
 name = "libsodium-sys"
 version = "0.2.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6b779387cd56adfbc02ea4a668e704f729be8d6a6abd2c27ca5ee537849a92fd"
+source = "git+https://github.com/FrankHan052176/sodiumoxide?branch=master#a09de89d843f88a7bfccd80266150fe5d33e1eee"
 dependencies = [
  "cc",
  "libc",
@@ -5837,6 +5836,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 
 [[package]]
+name = "opus-head-sys"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df99c7905445bdbb5c3e74161d4808625af15dd59a52427c7eeaed70c5c1c7f4"
+dependencies = [
+ "cmake",
+]
+
+[[package]]
 name = "orbclient"
 version = "0.3.48"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6940,6 +6948,30 @@ dependencies = [
 [[package]]
 name = "rdev"
 version = "0.5.0-2"
+source = "git+https://github.com/FrankHan052176/rdev?branch=ohos/exclude-linux-backend-on-ohos#2e91a16879b7426cb169ad7becfc8dae1d6bc3a5"
+dependencies = [
+ "cocoa 0.24.1",
+ "core-foundation 0.9.4",
+ "core-foundation-sys 0.8.7",
+ "core-graphics 0.22.3",
+ "dispatch",
+ "enum-map",
+ "epoll",
+ "inotify",
+ "lazy_static",
+ "libc",
+ "log",
+ "mio 0.8.11",
+ "strum 0.24.1",
+ "strum_macros 0.24.3",
+ "widestring",
+ "winapi 0.3.9",
+ "x11 2.21.0",
+]
+
+[[package]]
+name = "rdev"
+version = "0.5.0-2"
 source = "git+https://github.com/rustdesk-org/rdev#871bf1c856d6a30af2f56ab8848396a025140855"
 dependencies = [
  "cocoa 0.24.1",
@@ -7326,6 +7358,7 @@ dependencies = [
  "objc_id",
  "once_cell",
  "openssl",
+ "opus-head-sys",
  "os-version",
  "pam",
  "parity-tokio-ipc",
@@ -7334,7 +7367,7 @@ dependencies = [
  "piet-coregraphics",
  "portable-pty",
  "qrcode-generator",
- "rdev",
+ "rdev 0.5.0-2 (git+https://github.com/FrankHan052176/rdev?branch=ohos/exclude-linux-backend-on-ohos)",
  "remote_printer",
  "repng",
  "reqwest",
@@ -8088,8 +8121,7 @@ dependencies = [
 [[package]]
 name = "sodiumoxide"
 version = "0.2.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e26be3acb6c2d9a7aac28482586a7856436af4cfe7100031d219de2d2ecb0028"
+source = "git+https://github.com/FrankHan052176/sodiumoxide?branch=master#a09de89d843f88a7bfccd80266150fe5d33e1eee"
 dependencies = [
  "ed25519",
  "libc",
@@ -9073,7 +9105,7 @@ dependencies = [
 [[package]]
 name = "tray-icon"
 version = "0.21.3"
-source = "git+https://github.com/tauri-apps/tray-icon#0a5835b0e6828e37a1f781de9c2d671ae7a939e6"
+source = "git+https://github.com/tauri-apps/tray-icon?rev=0a5835b0e6828e37a1f781de9c2d671ae7a939e6#0a5835b0e6828e37a1f781de9c2d671ae7a939e6"
 dependencies = [
  "crossbeam-channel",
  "dirs 6.0.0",

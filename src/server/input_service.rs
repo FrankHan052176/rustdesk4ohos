@@ -457,7 +457,7 @@ lazy_static::lazy_static! {
     static ref RELATIVE_MOUSE_CONNS: Arc<Mutex<std::collections::HashSet<i32>>> = Default::default();
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(target_env = "ohos")))]
 lazy_static::lazy_static! {
     static ref WAYLAND_CLIPBOARD_INPUT_RECORDS: Arc<Mutex<Vec<(Instant, String)>>> =
         Default::default();
@@ -1603,7 +1603,7 @@ fn process_chr(en: &mut Enigo, chr: u32, down: bool, _hotkey: bool) {
     // On Wayland with uinput mode:
     // - ASCII printable: input via key events (custom keyboard path, e.g. portal keysym)
     // - Non-ASCII: input via clipboard paste
-    #[cfg(target_os = "linux")]
+    #[cfg(all(target_os = "linux", not(target_env = "ohos")))]
     if !crate::platform::linux::is_x11() && wayland_use_uinput() {
         // Skip clipboard for hotkeys (Ctrl/Alt/Meta pressed)
         if !is_hotkey_modifier_pressed(en) {
@@ -1659,7 +1659,7 @@ fn process_unicode(en: &mut Enigo, chr: u32) {
     // On Wayland with uinput mode:
     // - ASCII printable: input via key sequence (custom keyboard path)
     // - Non-ASCII: input via clipboard paste
-    #[cfg(target_os = "linux")]
+    #[cfg(all(target_os = "linux", not(target_env = "ohos")))]
     if !crate::platform::linux::is_x11() && wayland_use_uinput() {
         if let Ok(c) = char::try_from(chr) {
             if is_ascii_printable(c) {
@@ -1680,7 +1680,7 @@ fn process_seq(en: &mut Enigo, sequence: &str) {
     // On Wayland with uinput mode:
     // - pure ASCII printable sequence: input via key sequence (custom keyboard path)
     // - any non-ASCII present: input whole sequence via clipboard to preserve order
-    #[cfg(target_os = "linux")]
+    #[cfg(all(target_os = "linux", not(target_env = "ohos")))]
     if !crate::platform::linux::is_x11() && wayland_use_uinput() {
         if sequence.chars().all(is_ascii_printable) {
             en.key_sequence(sequence);
@@ -1697,16 +1697,16 @@ fn process_seq(en: &mut Enigo, sequence: &str) {
 /// This is an empirical value — Wayland provides no callback or event to confirm
 /// clipboard content has been received by the compositor. Under heavy system load,
 /// this delay may be insufficient, but there is no reliable alternative mechanism.
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(target_env = "ohos")))]
 const CLIPBOARD_SYNC_DELAY_MS: u64 = 50;
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(target_env = "ohos")))]
 const WAYLAND_CLIPBOARD_INPUT_FILTER_WINDOW: Duration = Duration::from_secs(1);
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(target_env = "ohos")))]
 const WAYLAND_CLIPBOARD_INPUT_MAX_RECORDS: usize = 256;
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(target_env = "ohos")))]
 pub(super) const WAYLAND_CLIPBOARD_INPUT_MAX_TEXT_CHARS: usize = 1024;
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(target_env = "ohos")))]
 fn cleanup_wayland_clipboard_input_records(records: &mut Vec<(Instant, String)>, now: Instant) {
     records.retain(|(created_at, _)| {
         now.saturating_duration_since(*created_at) <= WAYLAND_CLIPBOARD_INPUT_FILTER_WINDOW
@@ -1717,7 +1717,7 @@ fn cleanup_wayland_clipboard_input_records(records: &mut Vec<(Instant, String)>,
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(target_env = "ohos")))]
 #[inline]
 fn normalize_wayland_clipboard_input_text(text: &str) -> String {
     text.chars()
@@ -1725,7 +1725,7 @@ fn normalize_wayland_clipboard_input_text(text: &str) -> String {
         .collect()
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(target_env = "ohos")))]
 #[inline]
 fn get_wayland_clipboard_input_normalized_text(text: &str) -> Option<String> {
     let normalized = normalize_wayland_clipboard_input_text(text);
@@ -1735,7 +1735,7 @@ fn get_wayland_clipboard_input_normalized_text(text: &str) -> Option<String> {
     Some(normalized)
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(target_env = "ohos")))]
 #[inline]
 fn record_wayland_clipboard_input_for_sync_filter(text: &str) -> Option<(Instant, String)> {
     if text.is_empty() || crate::platform::linux::is_x11() {
@@ -1749,7 +1749,7 @@ fn record_wayland_clipboard_input_for_sync_filter(text: &str) -> Option<(Instant
     Some((now, normalized))
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(target_env = "ohos")))]
 #[inline]
 fn rollback_wayland_clipboard_input_record(record: (Instant, String)) {
     let (created_at, normalized) = record;
@@ -1766,7 +1766,7 @@ fn rollback_wayland_clipboard_input_record(record: (Instant, String)) {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(target_env = "ohos")))]
 pub(super) fn is_recent_wayland_clipboard_input(text: &str) -> bool {
     if text.is_empty() || crate::platform::linux::is_x11() {
         return false;
@@ -1784,7 +1784,7 @@ pub(super) fn is_recent_wayland_clipboard_input(text: &str) -> bool {
 
 /// Internal: Set clipboard content without delay.
 /// Returns true if clipboard was set successfully.
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(target_env = "ohos")))]
 fn set_clipboard_content(text: &str) -> bool {
     if let Err(e) = crate::clipboard::set_text_clipboard_with_owner_sync(
         text,
@@ -1805,7 +1805,7 @@ fn set_clipboard_content(text: &str) -> bool {
 /// Restoring clipboard could cause race conditions where subsequent keystrokes
 /// might accidentally paste the old clipboard content instead of the intended input.
 /// This trade-off prioritizes input reliability over preserving clipboard state.
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(target_env = "ohos")))]
 #[inline]
 pub(super) fn set_clipboard_for_paste_sync(text: &str) -> bool {
     let record = record_wayland_clipboard_input_for_sync_filter(text);
@@ -1820,14 +1820,14 @@ pub(super) fn set_clipboard_for_paste_sync(text: &str) -> bool {
 }
 
 /// Check if a character is ASCII printable (0x20-0x7E).
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(target_env = "ohos")))]
 #[inline]
 pub(super) fn is_ascii_printable(c: char) -> bool {
     c as u32 >= 0x20 && c as u32 <= 0x7E
 }
 
 /// Input a single character via clipboard + Shift+Insert in server process.
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(target_env = "ohos")))]
 #[inline]
 fn input_char_via_clipboard_server(en: &mut Enigo, chr: char) {
     input_text_via_clipboard_server(en, &chr.to_string());
@@ -1837,7 +1837,7 @@ fn input_char_via_clipboard_server(en: &mut Enigo, chr: char) {
 /// Shift+Insert is more universal than Ctrl+V, works in both GUI apps and terminals.
 ///
 /// Note: Clipboard content is NOT restored after paste - see `set_clipboard_for_paste_sync` for rationale.
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(target_env = "ohos")))]
 fn input_text_via_clipboard_server(en: &mut Enigo, text: &str) {
     if text.is_empty() {
         return;
@@ -2019,7 +2019,7 @@ fn translate_keyboard_mode(evt: &KeyEvent) {
             //   clipboard is unreliable in root service context.
             // - rdp_input mode (--server): forward sequence to custom keyboard handler so
             //   ASCII can use Portal keysym and non-ASCII can use clipboard.
-            #[cfg(target_os = "linux")]
+            #[cfg(all(target_os = "linux", not(target_env = "ohos")))]
             if !crate::platform::linux::is_x11() {
                 let mut en = ENIGO.lock().unwrap();
                 if wayland_use_rdp_input() {
