@@ -31,27 +31,56 @@ cfg_if! {
         mod android;
         pub use self::android::*;
     }else {
+        #[cfg(target_env = "ohos")]
+        pub use self::ohos::PixelBuffer;
         //TODO: Fallback implementation.
     }
 }
 
+#[cfg(target_env = "ohos")]
+pub use self::ohos::Capturer;
+#[cfg(target_env = "ohos")]
+pub use self::ohos::Display;
+
 pub mod codec;
+#[cfg(not(target_env = "ohos"))]
 pub mod convert;
+#[cfg(target_env = "ohos")]
+pub mod ohos;
+#[cfg(target_env = "ohos")]
+pub(crate) use self::ohos::avcodec as ohos_avcodec;
+#[cfg(target_env = "ohos")]
+pub use self::ohos::convert;
+#[cfg(target_env = "ohos")]
+pub use self::ohos::{
+    lookup_direct_render_target, register_direct_render_target_lookup, DirectRenderTarget,
+    DirectRenderTargetLookup,
+};
 #[cfg(feature = "hwcodec")]
 pub mod hwcodec;
 #[cfg(feature = "mediacodec")]
 pub mod mediacodec;
+#[cfg(not(target_env = "ohos"))]
 pub mod vpxcodec;
+#[cfg(target_env = "ohos")]
+pub use self::ohos::vpxcodec;
 #[cfg(feature = "vram")]
 pub mod vram;
 pub use self::convert::*;
 pub const STRIDE_ALIGN: usize = 64; // commonly used in libvpx vpx_img_alloc caller
 pub const HW_STRIDE_ALIGN: usize = 0; // recommended by av_frame_get_buffer
 
+#[cfg(not(target_env = "ohos"))]
 pub mod aom;
-#[cfg(not(any(target_os = "ios")))]
+#[cfg(target_env = "ohos")]
+pub use self::ohos::aom;
+#[cfg(not(target_os = "ios"))]
 pub mod camera;
+#[cfg(not(target_env = "ohos"))]
 pub mod record;
+#[cfg(target_env = "ohos")]
+pub use self::ohos::record;
+#[cfg(not(target_env = "ohos"))]
 mod vpx;
 
 #[repr(usize)]
