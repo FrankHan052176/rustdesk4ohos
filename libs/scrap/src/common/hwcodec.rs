@@ -45,6 +45,7 @@ pub struct HwRamEncoderConfig {
     pub mc_name: Option<String>,
     pub width: usize,
     pub height: usize,
+    pub fps: i32,
     pub quality: f32,
     pub keyframe_interval: Option<usize>,
 }
@@ -67,6 +68,7 @@ impl EncoderApi for HwRamEncoder {
                 let rc = Self::rate_control(&config);
                 let mut bitrate =
                     Self::bitrate(&config.name, config.width, config.height, config.quality);
+                bitrate = Self::scale_bitrate_for_fps(bitrate, config.fps);
                 bitrate = Self::check_bitrate_range(&config, bitrate);
                 let gop = config.keyframe_interval.unwrap_or(DEFAULT_GOP as _) as i32;
                 let ctx = EncodeContext {
@@ -77,7 +79,7 @@ impl EncoderApi for HwRamEncoder {
                     pixfmt: DEFAULT_PIXFMT,
                     align: HW_STRIDE_ALIGN as _,
                     kbs: bitrate as i32,
-                    fps: DEFAULT_FPS,
+                    fps: config.fps.max(1),
                     gop,
                     quality: DEFAULT_HW_QUALITY,
                     rc,
@@ -177,6 +179,7 @@ impl EncoderApi for HwRamEncoder {
             self.config.height,
             ratio,
         );
+        bitrate = Self::scale_bitrate_for_fps(bitrate, self.config.fps);
         if bitrate > 0 {
             bitrate = Self::check_bitrate_range(&self.config, bitrate);
             self.encoder.set_bitrate(bitrate as _).ok();
@@ -250,6 +253,14 @@ impl HwRamEncoder {
 
     pub fn bitrate(name: &str, width: usize, height: usize, ratio: f32) -> u32 {
         Self::calc_bitrate(width, height, ratio, name.contains("h264"))
+    }
+
+    pub fn scale_bitrate_for_fps(bitrate: u32, fps: i32) -> u32 {
+        let fps = fps.max(1) as u32;
+        bitrate
+            .saturating_mul(fps)
+            .saturating_add(DEFAULT_FPS as u32 - 1)
+            / DEFAULT_FPS as u32
     }
 
     pub fn calc_bitrate(width: usize, height: usize, ratio: f32, h264: bool) -> u32 {

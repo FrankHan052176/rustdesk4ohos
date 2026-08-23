@@ -90,6 +90,7 @@ impl UserDelay {
 struct UserData {
     auto_adjust_fps: Option<u32>, // reserve for compatibility
     custom_fps: Option<u32>,
+    high_fps_mode: bool,
     quality: Option<(i64, Quality)>, // (time, quality)
     delay: UserDelay,
     record: bool,
@@ -140,6 +141,14 @@ impl VideoQoS {
         let fps = self.fps;
         if fps >= MIN_FPS && fps <= MAX_FPS {
             fps
+        } else {
+            FPS
+        }
+    }
+
+    pub fn encoder_fps(&self) -> u32 {
+        if self.users.iter().any(|(_, user)| user.high_fps_mode) {
+            MAX_FPS
         } else {
             FPS
         }
@@ -204,6 +213,37 @@ impl VideoQoS {
         if let Some(user) = self.users.get_mut(&id) {
             user.custom_fps = Some(fps);
         }
+    }
+
+    pub fn user_high_fps_mode(&mut self, id: i32, enabled: bool) -> bool {
+        let mut changed = false;
+        let requested_fps = if let Some(user) = self.users.get_mut(&id) {
+            changed = user.high_fps_mode != enabled;
+            user.high_fps_mode = enabled;
+            if enabled {
+                if let Some(fps) = user.custom_fps {
+                    user.delay.fps = Some(fps);
+                    Some(fps)
+                } else {
+                    None
+                }
+            } else {
+                user.delay.fps = None;
+                None
+            }
+        } else {
+            None
+        };
+        if let Some(fps) = requested_fps {
+            log::info!(
+                "Explicit high-FPS session initialized: connection_id={}, fps={}",
+                id,
+                fps
+            );
+            self.fps = self.fps.max(fps.min(MAX_FPS));
+        }
+        self.adjust_fps();
+        changed
     }
 
     pub fn user_auto_adjust_fps(&mut self, id: i32, fps: u32) {
@@ -360,6 +400,24 @@ impl VideoQoS {
             display.send_counter += send_counter;
         }
         self.adjust_fps();
+        if self.users.iter().any(|(_, user)| user.high_fps_mode) {
+            let delays = self
+                .users
+                .iter()
+                .filter(|(_, user)| user.high_fps_mode)
+                .map(|(id, user)| (*id, user.delay.avg_delay()))
+                .collect::<Vec<_>>();
+            log::info!(
+                "Explicit high-FPS server trace: display={}, target_fps={}, encoder_fps={}, encoded_fps={}, ceiling_fps={}, bitrate_kbps={}, delays_ms={:?}",
+                video_service_name,
+                self.fps(),
+                self.encoder_fps(),
+                send_counter,
+                self.highest_fps(),
+                self.bitrate(),
+                delays
+            );
+        }
         let abr_enabled = self.in_vbr_state();
         if abr_enabled {
             if self.adjust_ratio_instant.elapsed().as_secs() >= ADJUST_RATIO_INTERVAL as u64 {
@@ -524,8 +582,12 @@ impl VideoQoS {
             }
         }
 
-        // For new connections (within 1 second), cap fps to INIT_FPS to ensure stability
-        if self.new_user_instant.elapsed().as_secs() < 1 {
+        let has_high_fps_mode = self.users.iter().any(|(_, user)| user.high_fps_mode);
+
+        // For new connections (within 1 second), cap fps to INIT_FPS to ensure stability.
+        // An explicit OHOS high-FPS request has already opted into the low-latency
+        // path and must not be forced through the 15 FPS warm-up gate.
+        if !has_high_fps_mode && self.new_user_instant.elapsed().as_secs() < 1 {
             if fps > INIT_FPS {
                 fps = INIT_FPS;
             }
@@ -591,5 +653,48 @@ impl RttCalculator {
             }
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn qos_with_user(id: i32) -> VideoQoS {
+        let mut qos = VideoQoS::default();
+        qos.users.insert(id, UserData::default());
+        qos
+    }
+
+    #[test]
+    fn custom_fps_alone_preserves_normal_qos_start() {
+        let mut qos = qos_with_user(1);
+        qos.user_custom_fps(1, 120);
+
+        assert_eq!(qos.fps(), FPS);
+        assert_eq!(qos.encoder_fps(), FPS);
+        assert_eq!(qos.users.get(&1).and_then(|user| user.delay.fps), None);
+    }
+
+    #[test]
+    fn explicit_high_fps_mode_seeds_requested_fps() {
+        let mut qos = qos_with_user(1);
+        qos.user_custom_fps(1, 120);
+        assert!(qos.user_high_fps_mode(1, true));
+        assert!(!qos.user_high_fps_mode(1, true));
+
+        assert_eq!(qos.fps(), 120);
+        assert_eq!(qos.encoder_fps(), 120);
+        assert_eq!(qos.users.get(&1).and_then(|user| user.delay.fps), Some(120));
+    }
+
+    #[test]
+    fn explicit_high_fps_mode_survives_sub_threshold_delay() {
+        let mut qos = qos_with_user(1);
+        qos.user_custom_fps(1, 120);
+        assert!(qos.user_high_fps_mode(1, true));
+        qos.user_network_delay(1, 95);
+
+        assert_eq!(qos.fps(), 120);
     }
 }

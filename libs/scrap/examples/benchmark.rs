@@ -262,6 +262,7 @@ mod hw {
                 mc_name: None,
                 width,
                 height,
+                fps: scrap::hwcodec::DEFAULT_FPS,
                 quality,
                 keyframe_interval: None,
             }),

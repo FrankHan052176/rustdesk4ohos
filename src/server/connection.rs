@@ -4818,10 +4818,14 @@ impl Connection {
             }
         }
         if o.custom_fps > 0 {
-            video_service::VIDEO_QOS
-                .lock()
-                .unwrap()
-                .user_custom_fps(self.inner.id(), o.custom_fps as _);
+            let high_fps_mode_changed = {
+                let mut qos = video_service::VIDEO_QOS.lock().unwrap();
+                qos.user_custom_fps(self.inner.id(), o.custom_fps as _);
+                qos.user_high_fps_mode(self.inner.id(), o.ohos_high_fps)
+            };
+            if high_fps_mode_changed {
+                self.refresh_video_display(None);
+            }
         }
         if let Some(q) = o.supported_decoding.clone().take() {
             scrap::codec::Encoder::update(scrap::codec::EncodingUpdate::Update(self.inner.id(), q));

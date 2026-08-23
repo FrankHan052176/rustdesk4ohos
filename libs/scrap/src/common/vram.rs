@@ -39,6 +39,7 @@ pub struct VRamEncoderConfig {
     pub device: AdapterDevice,
     pub width: usize,
     pub height: usize,
+    pub fps: i32,
     pub quality: f32,
     pub feature: FeatureContext,
     pub keyframe_interval: Option<usize>,
@@ -60,11 +61,14 @@ impl EncoderApi for VRamEncoder {
     {
         match cfg {
             EncoderCfg::VRAM(config) => {
-                let bitrate = Self::bitrate(
-                    config.feature.data_format,
-                    config.width,
-                    config.height,
-                    config.quality,
+                let bitrate = crate::hwcodec::HwRamEncoder::scale_bitrate_for_fps(
+                    Self::bitrate(
+                        config.feature.data_format,
+                        config.width,
+                        config.height,
+                        config.quality,
+                    ),
+                    config.fps,
                 );
                 let gop = config.keyframe_interval.unwrap_or(MAX_GOP as _) as i32;
                 let ctx = EncodeContext {
@@ -74,7 +78,7 @@ impl EncoderApi for VRamEncoder {
                         width: config.width as _,
                         height: config.height as _,
                         kbitrate: bitrate as _,
-                        framerate: 30,
+                        framerate: config.fps.max(1),
                         gop,
                     },
                 };
@@ -171,11 +175,14 @@ impl EncoderApi for VRamEncoder {
     }
 
     fn set_quality(&mut self, ratio: f32) -> ResultType<()> {
-        let bitrate = Self::bitrate(
-            self.ctx.f.data_format,
-            self.ctx.d.width as _,
-            self.ctx.d.height as _,
-            ratio,
+        let bitrate = crate::hwcodec::HwRamEncoder::scale_bitrate_for_fps(
+            Self::bitrate(
+                self.ctx.f.data_format,
+                self.ctx.d.width as _,
+                self.ctx.d.height as _,
+                ratio,
+            ),
+            self.ctx.d.framerate,
         );
         if bitrate > 0 {
             if self.encoder.set_bitrate((bitrate) as _).is_ok() {

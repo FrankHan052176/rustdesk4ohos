@@ -580,11 +580,13 @@ fn run(vs: VideoService) -> ResultType<()> {
         &Config::get_option("allow-auto-record-incoming"),
     );
     let client_record = video_qos.record();
+    let encoder_fps = video_qos.encoder_fps();
     drop(video_qos);
     let (mut encoder, encoder_cfg, codec_format, use_i444, recorder) = match setup_encoder(
         &c,
         sp.name(),
         quality,
+        encoder_fps,
         client_record,
         record_incoming,
         last_portable_service_running,
@@ -605,6 +607,7 @@ fn run(vs: VideoService) -> ResultType<()> {
                 &c,
                 sp.name(),
                 quality,
+                encoder_fps,
                 client_record,
                 record_incoming,
                 last_portable_service_running,
@@ -627,7 +630,7 @@ fn run(vs: VideoService) -> ResultType<()> {
         .lock()
         .unwrap()
         .set_support_changing_quality(&sp.name(), encoder.support_changing_quality());
-    log::info!("initial quality: {quality:?}");
+    log::info!("initial quality: {quality:?}, encoder fps: {encoder_fps}");
 
     if sp.is_option_true(OPTION_REFRESH) {
         sp.set_option_bool(OPTION_REFRESH, false);
@@ -934,6 +937,7 @@ fn setup_encoder(
     c: &CapturerInfo,
     name: String,
     quality: f32,
+    fps: u32,
     client_record: bool,
     record_incoming: bool,
     last_portable_service_running: bool,
@@ -950,6 +954,7 @@ fn setup_encoder(
         &c,
         name.to_string(),
         quality,
+        fps,
         client_record || record_incoming,
         last_portable_service_running,
         source,
@@ -966,6 +971,7 @@ fn get_encoder_config(
     c: &CapturerInfo,
     _name: String,
     quality: f32,
+    fps: u32,
     record: bool,
     _portable_service: bool,
     _source: VideoSource,
@@ -988,6 +994,7 @@ fn get_encoder_config(
                     device: c.device(),
                     width: c.width,
                     height: c.height,
+                    fps: fps as _,
                     quality,
                     feature,
                     keyframe_interval,
@@ -1000,6 +1007,7 @@ fn get_encoder_config(
                     mc_name: hw.mc_name,
                     width: c.width,
                     height: c.height,
+                    fps: fps as _,
                     quality,
                     keyframe_interval,
                 });
