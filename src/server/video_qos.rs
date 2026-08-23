@@ -32,6 +32,7 @@ pub const FPS: u32 = 30;
 pub const MIN_FPS: u32 = 1;
 pub const MAX_FPS: u32 = 120;
 pub const INIT_FPS: u32 = 15;
+const EXPLICIT_HIGH_FPS_MIN_FPS: u32 = 60;
 
 // Bitrate ratio constants for different quality levels
 const BR_MAX: f32 = 40.0; // 2000 * 2 / 100
@@ -593,6 +594,16 @@ impl VideoQoS {
             }
         }
 
+        // The OHOS client already treats 60 FPS as the safety floor for an
+        // explicitly requested high-FPS session. Keep the controlled-side QoS
+        // consistent with that contract: isolated delay/ack spikes must not send
+        // a nominal 120 FPS LAN session to 1-10 FPS before the client can report a
+        // corrected target. Ordinary sessions retain the existing unrestricted
+        // low-FPS fallback.
+        if has_high_fps_mode {
+            fps = fps.max(EXPLICIT_HIGH_FPS_MIN_FPS.min(highest_fps));
+        }
+
         // Ensure fps stays within valid range
         self.fps = fps.clamp(MIN_FPS, highest_fps);
     }
@@ -696,5 +707,18 @@ mod tests {
         qos.user_network_delay(1, 95);
 
         assert_eq!(qos.fps(), 120);
+    }
+
+    #[test]
+    fn explicit_high_fps_mode_keeps_sixty_fps_floor_on_delay_spike() {
+        let mut qos = qos_with_user(1);
+        qos.user_custom_fps(1, 120);
+        assert!(qos.user_high_fps_mode(1, true));
+
+        qos.user_network_delay(1, 2_000);
+        assert_eq!(qos.fps(), EXPLICIT_HIGH_FPS_MIN_FPS);
+
+        qos.user_delay_response_elapsed(1, 2_500);
+        assert_eq!(qos.fps(), EXPLICIT_HIGH_FPS_MIN_FPS);
     }
 }
