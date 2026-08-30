@@ -53,6 +53,7 @@ const ENCODER_BUFFER_TIMEOUT_US: i64 = 100_000;
 const ENCODER_OUTPUT_TIMEOUT: Duration = Duration::from_millis(300);
 const ENCODER_INPUT_BACKPRESSURE: &str = "OHOS_ENCODER_INPUT_BACKPRESSURE";
 const OH_SCALING_MODE_SCALE_FIT_V2: i32 = 4;
+const FALLBACK_DECODER_DIMENSION: usize = 128;
 const HILOG_DOMAIN: u32 = 0xFF01;
 const HILOG_TAG: &[u8] = b"RustDeskNative\0";
 const LOG_APP: i32 = 0;
@@ -1272,7 +1273,9 @@ pub fn new_h26x_decoder(
     format: CodecFormat,
     target: DirectRenderTarget,
 ) -> ResultType<OhosVideoDecoder> {
-    let (width, height) = target.decode_size.unwrap_or((64, 64));
+    let (width, height) = target
+        .decode_size
+        .unwrap_or((FALLBACK_DECODER_DIMENSION, FALLBACK_DECODER_DIMENSION));
     let render_context = target
         .surface_id
         .and_then(super::direct_render::take_render_context);

@@ -28,6 +28,9 @@ use std::{
     time::{Duration, SystemTime},
 };
 
+#[cfg(target_env = "ohos")]
+pub use crate::platform::ohos::main_discover_blocking;
+
 pub type SessionID = uuid::Uuid;
 
 lazy_static::lazy_static! {
@@ -172,7 +175,7 @@ pub fn session_add_sync(
     }
 }
 
-#[cfg(not(target_env = "ohos"))]
+#[cfg(any(not(target_env = "ohos"), feature = "ohos-flutter"))]
 pub fn session_start(
     events2ui: StreamSink<EventToUI>,
     session_id: SessionID,
@@ -181,7 +184,7 @@ pub fn session_start(
     session_start_(&session_id, &id, events2ui)
 }
 
-#[cfg(not(target_env = "ohos"))]
+#[cfg(any(not(target_env = "ohos"), feature = "ohos-flutter"))]
 pub fn session_start_with_displays(
     events2ui: StreamSink<EventToUI>,
     session_id: SessionID,
@@ -1144,13 +1147,6 @@ pub fn main_discover() {
     discover();
 }
 
-/// Run the same Core LAN discovery used by Flutter, but wait until its
-/// response window has completed. Native frontends use this from a worker
-/// thread when they need a coherent DiscoveryPeer snapshot before rendering.
-pub fn main_discover_blocking() -> Result<(), String> {
-    crate::lan::discover().map_err(|err| err.to_string())
-}
-
 pub fn main_get_api_server() -> String {
     get_api_server()
 }
@@ -1797,6 +1793,82 @@ pub fn cm_get_clients_length() -> usize {
 
 pub fn main_init(app_dir: String, custom_client_config: String) {
     initialize(&app_dir, &custom_client_config);
+}
+
+pub fn main_configure_ohos_host_display(width: usize, height: usize, display_id: u64) -> bool {
+    #[cfg(target_env = "ohos")]
+    {
+        return crate::server::ohos_screen_capture::configure(width, height, display_id);
+    }
+    #[cfg(not(target_env = "ohos"))]
+    false
+}
+
+pub fn main_set_ohos_host_clipboard_enabled(enabled: bool) {
+    #[cfg(target_env = "ohos")]
+    crate::platform::ohos::set_host_clipboard_available(enabled);
+    #[cfg(not(target_env = "ohos"))]
+    let _ = enabled;
+}
+
+pub fn main_update_ohos_host_clipboard_text(text: String) -> bool {
+    #[cfg(target_env = "ohos")]
+    {
+        use hbb_common::message_proto::{Clipboard, ClipboardFormat, MultiClipboards};
+
+        let clipboards = MultiClipboards {
+            clipboards: vec![Clipboard {
+                content: text.into_bytes().into(),
+                format: ClipboardFormat::Text.into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        crate::platform::ohos::update_clipboards(false, clipboards);
+        return true;
+    }
+    #[cfg(not(target_env = "ohos"))]
+    false
+}
+
+pub fn main_take_ohos_host_clipboard_text() -> Option<String> {
+    #[cfg(target_env = "ohos")]
+    {
+        use hbb_common::message_proto::ClipboardFormat;
+
+        if let Some(clipboards) = crate::platform::ohos::take_host_received_clipboards() {
+            for clipboard in clipboards.clipboards {
+                if clipboard.format.enum_value() == Ok(ClipboardFormat::Text) {
+                    if let Ok(text) = String::from_utf8(clipboard.content.to_vec()) {
+                        return Some(text);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+pub fn main_start_ohos_host() -> String {
+    #[cfg(target_env = "ohos")]
+    {
+        return crate::server::ohos_screen_capture::start_captured_host()
+            .err()
+            .unwrap_or_default();
+    }
+    #[cfg(not(target_env = "ohos"))]
+    "OHOS captured host is unavailable".to_owned()
+}
+
+pub fn main_stop_ohos_host() -> String {
+    #[cfg(target_env = "ohos")]
+    {
+        return crate::server::ohos_screen_capture::stop_captured_host()
+            .err()
+            .unwrap_or_default();
+    }
+    #[cfg(not(target_env = "ohos"))]
+    String::new()
 }
 
 pub fn main_device_id(id: String) {

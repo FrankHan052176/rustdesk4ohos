@@ -109,7 +109,8 @@ pub(crate) fn cjk_ui_unavailable() -> bool {
     cfg!(all(
         target_os = "linux",
         target_arch = "aarch64",
-        feature = "flutter"
+        feature = "flutter",
+        not(target_env = "ohos")
     ))
 }
 

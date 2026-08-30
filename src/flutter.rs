@@ -584,11 +584,11 @@ impl FlutterHandler {
                 }
             }
             if push {
-                #[cfg(not(target_env = "ohos"))]
+                #[cfg(any(not(target_env = "ohos"), feature = "ohos-flutter"))]
                 if let Some(stream) = &session.event_stream {
                     stream.add(EventToUI::Event(out.clone()));
                 }
-                #[cfg(target_env = "ohos")]
+                #[cfg(all(target_env = "ohos", not(feature = "ohos-flutter")))]
                 {
                     crate::platform::ohos::emit_session_event(sid, EventToUI::Event(out.clone()));
                 }
@@ -600,9 +600,9 @@ impl FlutterHandler {
         // to-do: Make sure the following logic is correct.
         // No need to remove the display handler, because it will be removed when the connection is closed.
         if let Some(session) = self.session_handlers.write().unwrap().get_mut(&session_id) {
-            #[cfg(not(target_env = "ohos"))]
+            #[cfg(any(not(target_env = "ohos"), feature = "ohos-flutter"))]
             try_send_close_event(&session.event_stream);
-            #[cfg(target_env = "ohos")]
+            #[cfg(all(target_env = "ohos", not(feature = "ohos-flutter")))]
             try_send_close_event(&session_id);
         }
     }
@@ -899,9 +899,9 @@ impl InvokeUiSession for FlutterHandler {
         let features = serde_json::ser::to_string(&features).unwrap_or("".to_owned());
         let resolutions = serialize_resolutions(&pi.resolutions.resolutions);
         *self.peer_info.write().unwrap() = pi.clone();
-        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        #[cfg(not(any(target_os = "android", target_os = "ios", target_env = "ohos")))]
         let is_support_multi_ui_session = crate::common::is_support_multi_ui_session(&pi.version);
-        #[cfg(any(target_os = "android", target_os = "ios"))]
+        #[cfg(any(target_os = "android", target_os = "ios", target_env = "ohos"))]
         let is_support_multi_ui_session = false;
         self.session_handlers
             .write()
@@ -1216,13 +1216,13 @@ impl FlutterHandler {
                     continue;
                 }
             }
-            #[cfg(not(target_env = "ohos"))]
+            #[cfg(any(not(target_env = "ohos"), feature = "ohos-flutter"))]
             if let Some(stream) = &session.event_stream {
                 let _ = session_id;
                 stream.add(EventToUI::Rgba(display));
                 is_sent = true;
             }
-            #[cfg(target_env = "ohos")]
+            #[cfg(all(target_env = "ohos", not(feature = "ohos-flutter")))]
             {
                 is_sent |=
                     crate::platform::ohos::emit_session_event(session_id, EventToUI::Rgba(display));
@@ -1378,26 +1378,28 @@ pub fn session_add(
 pub fn session_start_(
     session_id: &SessionID,
     id: &str,
-    #[cfg(not(target_env = "ohos"))] event_stream: StreamSink<EventToUI>,
-    #[cfg(target_env = "ohos")] already_started: bool,
+    #[cfg(any(not(target_env = "ohos"), feature = "ohos-flutter"))] event_stream: StreamSink<
+        EventToUI,
+    >,
+    #[cfg(all(target_env = "ohos", not(feature = "ohos-flutter")))] already_started: bool,
 ) -> ResultType<()> {
     // is_connected is used to indicate whether to start a peer connection. For two cases:
     // 1. "Move tab to new window"
     // 2. multi ui session within the same peer connection.
-    #[cfg(not(target_env = "ohos"))]
+    #[cfg(any(not(target_env = "ohos"), feature = "ohos-flutter"))]
     let mut is_connected = false;
-    #[cfg(target_env = "ohos")]
+    #[cfg(all(target_env = "ohos", not(feature = "ohos-flutter")))]
     let mut is_connected = already_started;
     let mut is_found = false;
     for s in sessions::get_sessions() {
         if let Some(h) = s.session_handlers.write().unwrap().get_mut(session_id) {
-            #[cfg(not(target_env = "ohos"))]
+            #[cfg(any(not(target_env = "ohos"), feature = "ohos-flutter"))]
             {
                 is_connected = h.event_stream.is_some();
                 try_send_close_event(&h.event_stream);
                 h.event_stream = Some(event_stream);
             }
-            #[cfg(target_env = "ohos")]
+            #[cfg(all(target_env = "ohos", not(feature = "ohos-flutter")))]
             let _ = h;
             is_found = true;
             break;
@@ -1432,7 +1434,7 @@ pub fn session_start_(
 }
 
 #[inline]
-#[cfg(not(target_env = "ohos"))]
+#[cfg(any(not(target_env = "ohos"), feature = "ohos-flutter"))]
 fn try_send_close_event(event_stream: &Option<StreamSink<EventToUI>>) {
     if let Some(stream) = &event_stream {
         stream.add(EventToUI::Event("close".to_owned()));
@@ -1440,7 +1442,7 @@ fn try_send_close_event(event_stream: &Option<StreamSink<EventToUI>>) {
 }
 
 #[inline]
-#[cfg(target_env = "ohos")]
+#[cfg(all(target_env = "ohos", not(feature = "ohos-flutter")))]
 fn try_send_close_event(session_id: &SessionID) {
     crate::platform::ohos::emit_session_event(session_id, EventToUI::Event("close".to_owned()));
 }

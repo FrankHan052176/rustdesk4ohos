@@ -116,6 +116,14 @@ mod pa_impl {
         unsafe {
             AUDIO_ZERO_COUNT = 0;
         }
+        #[cfg(target_env = "ohos")]
+        let _ohos_audio_input = match super::ohos_audio::OhosAudioInput::start() {
+            Ok(input) => Some(input),
+            Err(error) => {
+                log::error!("Unable to start OHOS host audio capture: {error}");
+                None
+            }
+        };
         let mut encoder = Encoder::new(crate::platform::PA_SAMPLE_RATE, Stereo, LowDelay)?;
         #[cfg(all(target_os = "linux", not(target_env = "ohos")))]
         allow_err!(

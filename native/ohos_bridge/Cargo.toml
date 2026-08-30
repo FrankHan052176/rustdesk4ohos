@@ -1,0 +1,24 @@
+[package]
+name = "rustdesk-ohos-flutter-bridge"
+version = "1.4.9"
+edition = "2021"
+rust-version = "1.75"
+
+[lib]
+name = "rustdesk_ohos_flutter_bridge"
+crate-type = ["cdylib"]
+
+[dependencies]
+flutter_rust_bridge = { version = "=1.80", features = ["uuid"] }
+librustdesk_core = { package = "rustdesk", path = "../../../R_RustDesk-Core", features = ["ohos-flutter"] }
+uuid = { version = "1.3", features = ["v4"] }
+
+[patch.crates-io]
+libsodium-sys = { git = "https://github.com/FrankHan052176/sodiumoxide", rev = "a09de89d843f88a7bfccd80266150fe5d33e1eee" }
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+rpath = true

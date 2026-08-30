@@ -39,7 +39,7 @@ mod version;
 pub use version::*;
 #[cfg(all(
     any(target_os = "android", target_os = "ios", feature = "flutter"),
-    not(target_env = "ohos")
+    any(not(target_env = "ohos"), feature = "ohos-flutter")
 ))]
 mod bridge_generated;
 #[cfg(any(target_os = "android", target_os = "ios", feature = "flutter"))]

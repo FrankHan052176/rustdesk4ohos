@@ -1,4 +1,7 @@
 // Minimal OpenHarmony adapter for native frontend callbacks and mobile clipboard state.
+#[path = "ohos_input.rs"]
+mod input;
+
 use crate::flutter_ffi::{EventToUI, SessionID};
 use hbb_common::{
     message_proto::{key_event, Clipboard, ClipboardFormat, KeyEvent, MultiClipboards},
@@ -8,7 +11,7 @@ use serde::Serialize;
 use std::{
     collections::{HashSet, VecDeque},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Mutex,
     },
 };
@@ -32,6 +35,8 @@ lazy_static::lazy_static! {
 
 static HOST_THREAD_STARTED: AtomicBool = AtomicBool::new(false);
 static HOST_ENABLED: AtomicBool = AtomicBool::new(false);
+static HOST_CLIPBOARD_AVAILABLE: AtomicBool = AtomicBool::new(false);
+static HOST_DISPLAY_ID: AtomicU64 = AtomicU64::new(0);
 const HOST_INPUT_EVENTS_CAPACITY: usize = 256;
 const HOST_AUDIO_FRAMES_CAPACITY: usize = 16;
 
@@ -218,6 +223,7 @@ fn normalize_host_pointer(
 pub(crate) fn queue_host_pointer(kind: &str, mask: i32, x: i32, y: i32) {
     let (x, y) =
         normalize_host_pointer(kind, mask, x, y, &mut HOST_POINTER_POSITION.lock().unwrap());
+    input::inject_pointer(kind, mask, x, y, HOST_DISPLAY_ID.load(Ordering::Acquire));
     push_host_input_event(HostInputEvent::Pointer {
         kind: kind.to_owned(),
         mask,
@@ -262,7 +268,32 @@ mod tests {
 }
 
 pub(crate) fn queue_host_key(event: &KeyEvent) {
+    input::inject_key(event, HOST_DISPLAY_ID.load(Ordering::Acquire));
     push_host_input_event(HostInputEvent::Key(HostKeyEvent::from_proto(event)));
+}
+
+pub(crate) fn set_host_display_id(display_id: u64) {
+    HOST_DISPLAY_ID.store(display_id, Ordering::Release);
+}
+
+pub(crate) fn request_host_input_authorization() -> Result<(), String> {
+    input::request_authorization()
+}
+
+pub(crate) fn host_input_capable() -> bool {
+    hbb_common::config::LocalConfig::get_option("ohos-host-input-capable") == "Y"
+}
+
+pub(crate) fn host_input_authorized() -> bool {
+    host_input_capable() && input::is_authorized()
+}
+
+pub(crate) fn set_host_clipboard_available(available: bool) {
+    HOST_CLIPBOARD_AVAILABLE.store(available, Ordering::Release);
+}
+
+pub(crate) fn host_clipboard_available() -> bool {
+    HOST_CLIPBOARD_AVAILABLE.load(Ordering::Acquire)
 }
 
 fn push_host_input_event(event: HostInputEvent) {
@@ -360,6 +391,8 @@ pub fn stop_host() {
     HOST_AUDIO.lock().unwrap().clear();
     scrap::ohos::reset_screen_state();
     HOST_RECEIVED_CLIPBOARD.lock().unwrap().take();
+    HOST_CLIPBOARD_AVAILABLE.store(false, Ordering::Release);
+    input::cancel_authorization();
     if was_enabled && HOST_THREAD_STARTED.load(Ordering::SeqCst) {
         crate::RendezvousMediator::restart();
     }
@@ -458,6 +491,12 @@ pub fn register_session_event_callback(callback: SessionEventCallback) {
     *SESSION_EVENT_CALLBACK.lock().unwrap() = Some(callback);
 }
 
+/// Run Core LAN discovery synchronously for native OHOS frontends.
+pub fn main_discover_blocking() -> Result<(), String> {
+    crate::lan::discover().map_err(|err| err.to_string())
+}
+
+#[cfg(not(feature = "ohos-flutter"))]
 pub fn session_start_with_polling_events(session_id: &SessionID, id: &str) -> ResultType<()> {
     let inserted = STARTED_SESSIONS.lock().unwrap().insert(*session_id);
     let already_started = !inserted;

@@ -201,7 +201,10 @@ mod tests {
         reset_screen_state();
         assert!(push_screen_frame_rgba(&[1, 2, 3, 4], 1, 1));
         let mut first = Capturer::new(Display::primary().unwrap()).unwrap();
-        assert!(first.frame(Duration::ZERO).is_ok());
+        match first.frame(Duration::ZERO).unwrap() {
+            Frame::PixelBuffer(buffer) => assert_eq!(buffer.pixfmt(), Pixfmt::RGBA),
+            _ => panic!("HarmonyOS host frames must use a pixel buffer"),
+        }
 
         reset_screen_state();
         assert_eq!(screen_size(), (0, 0));

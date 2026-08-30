@@ -79,6 +79,28 @@ use crate::virtual_display_manager;
 pub type Sender = mpsc::UnboundedSender<(Instant, Arc<Message>)>;
 
 const FAILURE_IDX_ID_WHITELIST: usize = 2;
+
+fn host_input_authorized() -> bool {
+    #[cfg(target_env = "ohos")]
+    {
+        crate::platform::ohos::host_input_authorized()
+    }
+    #[cfg(not(target_env = "ohos"))]
+    {
+        true
+    }
+}
+
+fn host_clipboard_available() -> bool {
+    #[cfg(target_env = "ohos")]
+    {
+        crate::platform::ohos::host_clipboard_available()
+    }
+    #[cfg(not(target_env = "ohos"))]
+    {
+        true
+    }
+}
 // How long a rejection counts, so also how long a blocked address stays blocked. Longer
 // throttles enumeration harder; shorter limits collateral on whitelisted neighbours.
 const ID_WHITELIST_FAILURE_DECAY_MINUTES: i32 = 10;
@@ -482,17 +504,13 @@ impl Connection {
             port_forward_address: "".to_owned(),
             tx_to_cm,
             authorized: false,
-            // HarmonyOS currently ships only the watched/view-only host mode.
-            // Keep every non-view capability denied in Core so stale
-            // configuration or a future ArkTS regression cannot widen access.
-            keyboard: !cfg!(target_env = "ohos")
+            keyboard: (!cfg!(target_env = "ohos") || host_input_authorized())
                 && Self::permission(keys::OPTION_ENABLE_KEYBOARD, &control_permissions),
-            clipboard: !cfg!(target_env = "ohos")
+            clipboard: host_clipboard_available()
                 && Self::permission(keys::OPTION_ENABLE_CLIPBOARD, &control_permissions),
             audio: Self::permission(keys::OPTION_ENABLE_AUDIO, &control_permissions),
             // to-do: make sure is the option correct here
-            file: !cfg!(target_env = "ohos")
-                && Self::permission(keys::OPTION_ENABLE_FILE_TRANSFER, &control_permissions),
+            file: Self::permission(keys::OPTION_ENABLE_FILE_TRANSFER, &control_permissions),
             restart: !cfg!(target_env = "ohos")
                 && Self::permission(keys::OPTION_ENABLE_REMOTE_RESTART, &control_permissions),
             recording: !cfg!(target_env = "ohos")
@@ -706,17 +724,34 @@ impl Connection {
                         }
                         ipc::Data::SwitchPermission{name, enabled} => {
                             let enabled = if cfg!(target_env = "ohos") {
-                                if name == "audio" {
+                                if name == "keyboard" {
+                                    enabled
+                                        && host_input_authorized()
+                                        && Self::permission(
+                                            keys::OPTION_ENABLE_KEYBOARD,
+                                            &conn.control_permissions,
+                                        )
+                                } else if name == "audio" {
                                     enabled && Self::permission(
                                         keys::OPTION_ENABLE_AUDIO,
                                         &conn.control_permissions,
                                     )
+                                } else if name == "clipboard" {
+                                    enabled
+                                        && host_clipboard_available()
+                                        && Self::permission(
+                                            keys::OPTION_ENABLE_CLIPBOARD,
+                                            &conn.control_permissions,
+                                        )
+                                } else if name == "file" {
+                                    enabled
+                                        && Self::permission(
+                                            keys::OPTION_ENABLE_FILE_TRANSFER,
+                                            &conn.control_permissions,
+                                        )
                                 } else if matches!(
                                     name.as_str(),
-                                    "keyboard"
-                                        | "clipboard"
-                                        | "file"
-                                        | "restart"
+                                    "restart"
                                         | "recording"
                                         | "block_input"
                                         | "privacy_mode"
@@ -2773,15 +2808,20 @@ impl Connection {
         }
         // After handling CloseReason messages, proceed to process other message types
         if let Some(message::Union::LoginRequest(lr)) = msg.union {
-            if cfg!(target_env = "ohos") && lr.union.is_some() {
+            if cfg!(target_env = "ohos")
+                && !matches!(
+                    lr.union.as_ref(),
+                    None | Some(login_request::Union::FileTransfer(_))
+                )
+            {
                 self.send_login_error(
-                    "HarmonyOS host currently supports screen-and-audio viewing only",
+                    "HarmonyOS host currently supports remote desktop and file transfer only",
                 )
                 .await;
                 sleep(1.).await;
                 return false;
             }
-            if cfg!(target_env = "ohos") && !self.audio {
+            if cfg!(target_env = "ohos") && lr.union.is_none() && !self.audio {
                 self.send_login_error(
                     "HarmonyOS watched/view-only hosting requires device audio permission",
                 )

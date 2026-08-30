@@ -25,6 +25,7 @@ const kUseBothPasswords = "use-both-passwords";
 
 class ServerModel with ChangeNotifier {
   bool _isStart = false; // Android MainService status
+  bool _serviceStarting = false;
   bool _mediaOk = false;
   bool _inputOk = false;
   bool _audioOk = false;
@@ -227,6 +228,16 @@ class ServerModel with ChangeNotifier {
     notifyListeners();
   }
 
+  checkOhosPermission() async {
+    final audioOption = await bind.mainGetOption(key: kOptionEnableAudio);
+    final fileOption = await bind.mainGetOption(key: kOptionEnableFileTransfer);
+    _audioOk = audioOption != 'N';
+    _fileOk = fileOption != 'N';
+    _clipboardOk = false;
+    _inputOk = false;
+    notifyListeners();
+  }
+
   updatePasswordModel() async {
     var update = false;
     final temporaryPassword = await bind.mainGetTemporaryPassword();
@@ -390,6 +401,15 @@ class ServerModel with ChangeNotifier {
 
   /// Toggle the screen sharing service.
   toggleService() async {
+    if (isOhos) {
+      if (_serviceStarting) return;
+      if (_isStart) {
+        await stopService();
+      } else {
+        await startService();
+      }
+      return;
+    }
     if (_isStart) {
       final res = await parent.target?.dialogManager
           .show<bool>((setState, close, context) {
@@ -448,6 +468,30 @@ class ServerModel with ChangeNotifier {
 
   /// Start the screen sharing service.
   Future<void> startService() async {
+    if (isOhos) {
+      if (_serviceStarting || _isStart) return;
+      _serviceStarting = true;
+      notifyListeners();
+      try {
+        final error = await platformFFI.startOhosHost();
+        if (error.isNotEmpty) {
+          throw Exception(error);
+        }
+        _isStart = true;
+        _mediaOk = true;
+        WakelockManager.enable(_wakelockKey, isServer: true);
+      } catch (error) {
+        await platformFFI.stopOhosHost();
+        _isStart = false;
+        _mediaOk = false;
+        debugPrint('Failed to start OHOS host: $error');
+        showToast(error.toString());
+      } finally {
+        _serviceStarting = false;
+        notifyListeners();
+      }
+      return;
+    }
     _isStart = true;
     notifyListeners();
     parent.target?.ffiModel.updateEventListener(parent.target!.sessionId, "");
@@ -462,6 +506,18 @@ class ServerModel with ChangeNotifier {
 
   /// Stop the screen sharing service.
   Future<void> stopService() async {
+    if (isOhos) {
+      final error = await platformFFI.stopOhosHost();
+      if (error.isNotEmpty) {
+        showToast(error);
+      }
+      _isStart = false;
+      _mediaOk = false;
+      closeAll();
+      WakelockManager.disable(_wakelockKey);
+      notifyListeners();
+      return;
+    }
     _isStart = false;
     closeAll();
     await parent.target?.invokeMethod("stop_service");

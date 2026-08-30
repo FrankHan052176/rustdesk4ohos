@@ -33,6 +33,10 @@ use video_service::VideoSource;
 use crate::ipc::Data;
 
 pub mod audio_service;
+#[cfg(target_env = "ohos")]
+mod ohos_audio;
+#[cfg(target_env = "ohos")]
+pub(crate) mod ohos_screen_capture;
 #[cfg(target_os = "windows")]
 pub mod terminal_helper;
 #[cfg(not(any(target_os = "android", target_os = "ios", target_env = "ohos")))]

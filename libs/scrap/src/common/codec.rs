@@ -561,6 +561,20 @@ impl Decoder {
             }
         }
         #[cfg(target_env = "ohos")]
+        if decoding.prefer == PreferCodec::Auto.into() {
+            decoding.prefer = if decoding.ability_h265 > 0 {
+                PreferCodec::H265.into()
+            } else if decoding.ability_h264 > 0 {
+                PreferCodec::H264.into()
+            } else if decoding.ability_av1 > 0 {
+                PreferCodec::AV1.into()
+            } else if decoding.ability_vp9 > 0 {
+                PreferCodec::VP9.into()
+            } else {
+                PreferCodec::VP8.into()
+            };
+        }
+        #[cfg(target_env = "ohos")]
         log::info!(
             "OHOS supported decodings: vp8={}, vp9={}, av1={}, h264={}, h265={}, prefer={:?}, mark_unsupported={:?}",
             decoding.ability_vp8,

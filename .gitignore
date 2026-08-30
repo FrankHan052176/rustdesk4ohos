@@ -1,5 +1,6 @@
 /build
 /target
+/native/ohos_bridge/target/
 .vscode
 .idea
 .DS_Store
