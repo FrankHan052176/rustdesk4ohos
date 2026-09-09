@@ -377,6 +377,16 @@ impl VideoQoS {
         }
     }
 
+    // Wire custom_fps can be explicit or legacy auto FPS; its source is indistinguishable.
+    // Sample only at encoder creation. Later hints require an existing rebuild or reconnect.
+    pub fn encoder_initial_fps_hint(&self) -> u32 {
+        self.users
+            .values()
+            .map(|user| user.custom_fps.unwrap_or(FPS).clamp(MIN_FPS, MAX_FPS))
+            .min()
+            .unwrap_or(FPS)
+    }
+
     #[inline]
     fn highest_fps(&self) -> u32 {
         let user_fps = |u: &UserData| {
@@ -533,6 +543,50 @@ impl VideoQoS {
 
         // Ensure fps stays within valid range
         self.fps = fps.clamp(MIN_FPS, highest_fps);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn encoder_initial_hint_tracks_wire_custom_fps() {
+        let mut qos = VideoQoS::default();
+        assert_eq!(qos.encoder_initial_fps_hint(), FPS);
+        qos.users.insert(1, UserData::default());
+        assert_eq!(qos.encoder_initial_fps_hint(), FPS);
+        qos.user_custom_fps(1, 90);
+        assert_eq!(qos.encoder_initial_fps_hint(), 90);
+        qos.user_auto_adjust_fps(1, 60);
+        for delay in [10, 200, 900, 10] {
+            qos.user_network_delay(1, delay);
+            qos.user_delay_response_elapsed(1, 3000);
+            assert_eq!(qos.encoder_initial_fps_hint(), 90);
+        }
+        // Legacy auto FPS also arrives through custom_fps and changes the next creation hint.
+        qos.user_custom_fps(1, 45);
+        assert_eq!(qos.encoder_initial_fps_hint(), 45);
+        qos.user_custom_fps(1, MAX_FPS);
+        assert_eq!(qos.encoder_initial_fps_hint(), 120);
+        for invalid in [0, MAX_FPS + 1, u32::MAX] {
+            qos.user_custom_fps(1, invalid);
+            assert_eq!(qos.encoder_initial_fps_hint(), MAX_FPS);
+        }
+        qos.users.insert(2, UserData::default());
+        assert_eq!(qos.encoder_initial_fps_hint(), FPS);
+        qos.user_custom_fps(2, 90);
+        assert_eq!(qos.encoder_initial_fps_hint(), 90);
+        qos.user_custom_fps(2, MIN_FPS);
+        assert_eq!(qos.encoder_initial_fps_hint(), MIN_FPS);
+        qos.on_connection_close(2);
+        assert_eq!(qos.encoder_initial_fps_hint(), MAX_FPS);
+        qos.users.get_mut(&1).unwrap().custom_fps = Some(u32::MAX);
+        assert_eq!(qos.encoder_initial_fps_hint(), MAX_FPS);
+        qos.users.get_mut(&1).unwrap().custom_fps = Some(0);
+        assert_eq!(qos.encoder_initial_fps_hint(), MIN_FPS);
+        qos.on_connection_close(1);
+        assert_eq!(qos.encoder_initial_fps_hint(), FPS);
     }
 }
 

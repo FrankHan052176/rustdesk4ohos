@@ -40,6 +40,7 @@ pub struct VRamEncoderConfig {
     pub width: usize,
     pub height: usize,
     pub quality: f32,
+    pub fps: u32,
     pub feature: FeatureContext,
     pub keyframe_interval: Option<usize>,
 }
@@ -74,19 +75,25 @@ impl EncoderApi for VRamEncoder {
                         width: config.width as _,
                         height: config.height as _,
                         kbitrate: bitrate as _,
-                        framerate: 30,
+                        framerate: <i32 as std::convert::TryFrom<u32>>::try_from(config.fps)
+                            .ok()
+                            .filter(|fps| *fps > 0)
+                            .ok_or_else(|| anyhow!("Invalid encoder target FPS"))?,
                         gop,
                     },
                 };
                 match Encoder::new(ctx.clone()) {
-                    Ok(encoder) => Ok(VRamEncoder {
-                        encoder,
-                        ctx,
-                        format: config.feature.data_format,
-                        bitrate,
-                        last_frame_len: 0,
-                        same_bad_len_counter: 0,
-                    }),
+                    Ok(encoder) => {
+                        log::info!("hardware encoder initialized: storage=texture codec={:?} configured_fps={}", config.feature.data_format, ctx.d.framerate);
+                        Ok(VRamEncoder {
+                            encoder,
+                            ctx,
+                            format: config.feature.data_format,
+                            bitrate,
+                            last_frame_len: 0,
+                            same_bad_len_counter: 0,
+                        })
+                    }
                     Err(_) => Err(anyhow!(format!("Failed to create encoder"))),
                 }
             }

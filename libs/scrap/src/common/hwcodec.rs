@@ -46,6 +46,7 @@ pub struct HwRamEncoderConfig {
     pub width: usize,
     pub height: usize,
     pub quality: f32,
+    pub fps: u32,
     pub keyframe_interval: Option<usize>,
 }
 
@@ -77,7 +78,10 @@ impl EncoderApi for HwRamEncoder {
                     pixfmt: DEFAULT_PIXFMT,
                     align: HW_STRIDE_ALIGN as _,
                     kbs: bitrate as i32,
-                    fps: DEFAULT_FPS,
+                    fps: <i32 as std::convert::TryFrom<u32>>::try_from(config.fps)
+                        .ok()
+                        .filter(|fps| *fps > 0)
+                        .ok_or_else(|| anyhow!("Invalid encoder target FPS"))?,
                     gop,
                     quality: DEFAULT_HW_QUALITY,
                     rc,
@@ -94,13 +98,16 @@ impl EncoderApi for HwRamEncoder {
                     }
                 };
                 match Encoder::new(ctx.clone()) {
-                    Ok(encoder) => Ok(HwRamEncoder {
-                        encoder,
-                        format,
-                        pixfmt: ctx.pixfmt,
-                        bitrate,
-                        config,
-                    }),
+                    Ok(encoder) => {
+                        log::info!("hardware encoder initialized: storage=ram codec={:?} configured_fps={}", format, ctx.fps);
+                        Ok(HwRamEncoder {
+                            encoder,
+                            format,
+                            pixfmt: ctx.pixfmt,
+                            bitrate,
+                            config,
+                        })
+                    }
                     Err(_) => Err(anyhow!(format!("Failed to create encoder"))),
                 }
             }

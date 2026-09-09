@@ -1,0 +1,157 @@
+name: Windows high-FPS unsigned x64
+
+on:
+  workflow_dispatch:
+  # Bootstrap on the dedicated branch without registering this workflow on master.
+  push:
+    branches:
+      - perf/zero-copy-high-fps
+    paths:
+      - .github/workflows/windows-high-fps.yml
+      - .github/scripts/windows-high-fps.py
+      - src/server/video_qos.rs
+      - src/server/video_service.rs
+      - libs/scrap/src/common/vram.rs
+      - libs/scrap/src/common/hwcodec.rs
+      - libs/scrap/examples/benchmark.rs
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUST_VERSION: '1.95.0'
+  FLUTTER_VERSION: '3.24.5'
+  LLVM_VERSION: '15.0.6'
+  VCPKG_COMMIT_ID: '9e593bb18ea69cc5095e012465dcd675a822ed0d'
+  VCPKG_DEFAULT_TRIPLET: x64-windows-static
+  VCPKG_DEFAULT_HOST_TRIPLET: x64-windows-static
+  CARGO_TERM_COLOR: never
+
+jobs:
+  windows-x64:
+    if: github.ref == 'refs/heads/perf/zero-copy-high-fps'
+    runs-on: windows-2022
+    timeout-minutes: 150
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - name: Record source and start time
+        run: |
+          set -euo pipefail
+          echo "BUILD_STARTED=$(date +%s)" >> "$GITHUB_ENV"
+          git rev-parse HEAD
+          git submodule status --recursive
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+      - uses: microsoft/setup-msbuild@6fb02220983dee41ce7ae257b6f4d8f9bf5ed4ce # v2
+      - uses: KyleMayes/install-llvm-action@ebc0426251bc40c7cd31162802432c68818ab8f0 # v2.0.9
+        with:
+          version: ${{ env.LLVM_VERSION }}
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: x86_64-pc-windows-msvc
+          components: rustfmt
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          prefix-key: high-fps-windows-x64-rust-1.95-v1
+          cache-on-failure: true
+      - uses: subosito/flutter-action@2783a3f08e1baf891508463f8c6653c258246225 # v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          architecture: x64
+      - name: Prepare isolated cache locations
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          "PUB_CACHE=$env:RUNNER_TEMP\high-fps-pub" >> $env:GITHUB_ENV
+          "VCPKG_BINARY_SOURCES=clear;files,$env:RUNNER_TEMP\vcpkg-binary,readwrite" >> $env:GITHUB_ENV
+          New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\vcpkg-binary" | Out-Null
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ runner.temp }}/vcpkg-binary
+          key: high-fps-windows-2022-x64-static-${{ env.VCPKG_COMMIT_ID }}-${{ hashFiles('vcpkg.json', 'res/vcpkg/**', 'res/vcpkg-triplets/**') }}
+      - uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2 # v11
+        with:
+          vcpkgDirectory: C:\vcpkg
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
+          doNotCache: true
+      - name: Install native codec dependencies
+        run: |
+          set -euo pipefail
+          "$VCPKG_ROOT/vcpkg" install --triplet x64-windows-static --x-install-root="$VCPKG_ROOT/installed"
+      - name: Match production x64 Flutter engine and SDK patch
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          flutter precache --windows
+          if ($LASTEXITCODE -ne 0) { throw 'Flutter precache failed' }
+          $sdk = Split-Path (Split-Path (Get-Command flutter).Source)
+          git -C $sdk apply --check "$env:GITHUB_WORKSPACE\.github\patches\flutter_3.24.4_dropdown_menu_enableFilter.diff"
+          if ($LASTEXITCODE -ne 0) { throw 'Flutter SDK patch drift' }
+          git -C $sdk apply "$env:GITHUB_WORKSPACE\.github\patches\flutter_3.24.4_dropdown_menu_enableFilter.diff"
+          if ($LASTEXITCODE -ne 0) { throw 'Flutter SDK patch failed' }
+          $archive = "$env:RUNNER_TEMP\windows-x64-release.zip"
+          Invoke-WebRequest https://github.com/rustdesk/engine/releases/download/main/windows-x64-release.zip -OutFile $archive
+          (Get-FileHash $archive -Algorithm SHA256).Hash | Set-Content engine-archive-sha256.txt
+          $unpack = "$env:RUNNER_TEMP\high-fps-engine"
+          Expand-Archive $archive -DestinationPath $unpack
+          if (!(Test-Path "$unpack\flutter_windows.dll")) { throw 'Unexpected engine archive layout' }
+          Copy-Item "$unpack\*" "$sdk\bin\cache\artifacts\engine\windows-x64-release" -Recurse -Force
+      - name: Resolve Dart and apply Windows-only compatibility overlay
+        run: |
+          set -euo pipefail
+          (cd flutter && flutter pub get)
+          python .github/scripts/windows-high-fps.py prepare
+      - name: Generate matching FRB bindings
+        run: |
+          set -euo pipefail
+          cargo install cargo-expand --version 1.0.95 --locked
+          cargo install flutter_rust_bridge_codegen --version 1.80.1 --features uuid --locked
+          flutter_rust_bridge_codegen --rust-input ./src/flutter_ffi.rs --dart-output ./flutter/lib/generated_bridge.dart --c-output ./flutter/macos/Runner/bridge_generated.h
+          test -s src/bridge_generated.rs
+          test -s flutter/lib/generated_bridge.dart
+          test -s flutter/lib/generated_bridge.freezed.dart
+      - name: Compile complete Windows Flutter application
+        run: |
+          set -euo pipefail
+          rustc -Vv
+          cargo -V
+          flutter --version
+          python build.py --portable --flutter --skip-portable-pack --hwcodec --vram
+          test -s flutter/build/windows/x64/runner/Release/rustdesk.exe
+      - name: Build pinned privacy-window helper
+        run: |
+          set -euo pipefail
+          git clone https://github.com/rustdesk-org/RustDeskTempTopMostWindow "$RUNNER_TEMP/HighFpsTopMost"
+          git -C "$RUNNER_TEMP/HighFpsTopMost" checkout ecd8d6a139eee76845ea66423fb739af450fda90
+          MSYS_NO_PATHCONV=1 msbuild "$RUNNER_TEMP/HighFpsTopMost/WindowInjection/WindowInjection.vcxproj" -p:Configuration=Release -p:Platform=x64 /p:TargetVersion=Windows10
+          test -s "$RUNNER_TEMP/HighFpsTopMost/WindowInjection/x64/Release/WindowInjection.dll"
+          cp "$RUNNER_TEMP/HighFpsTopMost/WindowInjection/x64/Release/WindowInjection.dll" flutter/build/windows/x64/runner/Release/
+      - name: Validate and zip complete unsigned runtime
+        run: |
+          set -euo pipefail
+          python .github/scripts/windows-high-fps.py package
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rustdesk-high-fps-windows-x64-${{ github.sha }}
+          path: high-fps-output/*
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+      - name: Record elapsed time
+        if: always()
+        run: |
+          echo "Windows x64 elapsed: $(( $(date +%s) - BUILD_STARTED )) seconds" >> "$GITHUB_STEP_SUMMARY"
+          echo 'Unsigned runtime ZIP only; no signing, release, publication, or remote installation.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Rust cache: high-fps-windows-x64-rust-1.95-v1; vcpkg cache keyed by baseline and overlays.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'No GPU/H265/high-refresh acceptance test runs on the hosted builder.' >> "$GITHUB_STEP_SUMMARY"

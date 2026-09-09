@@ -1014,6 +1014,7 @@ fn get_encoder_config(
                     width: c.width,
                     height: c.height,
                     quality,
+                    fps: VIDEO_QOS.lock().unwrap().encoder_initial_fps_hint(),
                     feature,
                     keyframe_interval,
                 });
@@ -1026,6 +1027,7 @@ fn get_encoder_config(
                     width: c.width,
                     height: c.height,
                     quality,
+                    fps: VIDEO_QOS.lock().unwrap().encoder_initial_fps_hint(),
                     keyframe_interval,
                 });
             }
