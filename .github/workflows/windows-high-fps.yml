@@ -130,13 +130,24 @@ jobs:
           python build.py --portable --flutter --skip-portable-pack --hwcodec --vram
           test -s flutter/build/windows/x64/runner/Release/rustdesk.exe
       - name: Build pinned privacy-window helper
+        shell: pwsh
         run: |
-          set -euo pipefail
-          git clone https://github.com/rustdesk-org/RustDeskTempTopMostWindow "$RUNNER_TEMP/HighFpsTopMost"
-          git -C "$RUNNER_TEMP/HighFpsTopMost" checkout ecd8d6a139eee76845ea66423fb739af450fda90
-          MSYS_NO_PATHCONV=1 msbuild "$RUNNER_TEMP/HighFpsTopMost/WindowInjection/WindowInjection.vcxproj" -p:Configuration=Release -p:Platform=x64 /p:TargetVersion=Windows10
-          test -s "$RUNNER_TEMP/HighFpsTopMost/WindowInjection/x64/Release/WindowInjection.dll"
-          cp "$RUNNER_TEMP/HighFpsTopMost/WindowInjection/x64/Release/WindowInjection.dll" flutter/build/windows/x64/runner/Release/
+          $ErrorActionPreference = 'Stop'
+          $top = "$env:RUNNER_TEMP\HighFpsTopMost"
+          git clone https://github.com/rustdesk-org/RustDeskTempTopMostWindow $top
+          if ($LASTEXITCODE -ne 0) { throw 'Privacy helper clone failed' }
+          git -C $top checkout ecd8d6a139eee76845ea66423fb739af450fda90
+          if ($LASTEXITCODE -ne 0) { throw 'Privacy helper checkout failed' }
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (!(Test-Path -LiteralPath $vswhere -PathType Leaf)) { throw 'vswhere not found' }
+          $msbuild = & $vswhere -latest -products '*' -requires Microsoft.Component.MSBuild -find 'MSBuild\**\Bin\MSBuild.exe' | Select-Object -First 1
+          if ($LASTEXITCODE -ne 0 -or !$msbuild) { throw 'MSBuild discovery failed' }
+          if (!(Test-Path -LiteralPath $msbuild -PathType Leaf)) { throw 'Discovered MSBuild does not exist' }
+          & $msbuild "$top\WindowInjection\WindowInjection.vcxproj" /p:Configuration=Release /p:Platform=x64 /p:TargetVersion=Windows10
+          if ($LASTEXITCODE -ne 0) { throw 'Privacy helper build failed' }
+          $dll = "$top\WindowInjection\x64\Release\WindowInjection.dll"
+          if (!(Test-Path -LiteralPath $dll -PathType Leaf) -or (Get-Item -LiteralPath $dll).Length -eq 0) { throw 'Privacy helper DLL missing' }
+          Copy-Item -LiteralPath $dll -Destination flutter/build/windows/x64/runner/Release/
       - name: Validate and zip complete unsigned runtime
         run: |
           set -euo pipefail
