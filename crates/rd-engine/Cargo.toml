@@ -18,8 +18,13 @@ windows-modern-producer = []
 
 [dependencies]
 hbb_common = { path = "../../libs/hbb_common" }
-tokio = { version = "=1.44.2", features = ["rt-multi-thread", "macros", "net", "sync", "time", "io-util"] }
+tokio = { version = "=1.44.2", features = ["rt-multi-thread", "macros", "net", "sync", "time", "io-util", "signal"] }
 tokio-util = { version = "=0.7.15", features = ["codec", "rt"] }
 
 [build-dependencies]
 cc = "1"
+
+[[bin]]
+name = "rd-engine-windows-host"
+path = "src/bin/rd-engine-windows-host.rs"
+required-features = ["windows-modern-producer"]

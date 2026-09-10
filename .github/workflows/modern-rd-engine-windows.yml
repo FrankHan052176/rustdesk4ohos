@@ -65,6 +65,8 @@ jobs:
           }
       - name: Test default windows-modern-producer
         run: cargo test --locked --target x86_64-pc-windows-msvc --manifest-path crates/rd-engine/Cargo.toml
+      - name: Build release Windows host launcher
+        run: cargo build --locked --release --target x86_64-pc-windows-msvc --bin rd-engine-windows-host --manifest-path crates/rd-engine/Cargo.toml
       - name: Collect engine artifacts and source provenance
         shell: pwsh
         run: |
@@ -75,12 +77,15 @@ jobs:
           }
           $testBinaries = @(Get-ChildItem -LiteralPath $deps -File -Filter '*.exe')
           $engineRlibs = @(Get-ChildItem -LiteralPath $deps -File -Filter '*rd_engine*.rlib')
+          $hostExecutable = 'crates/rd-engine/target/x86_64-pc-windows-msvc/release/rd-engine-windows-host.exe'
           if ($testBinaries.Count -eq 0) { throw 'Main engine test binaries are absent.' }
           if ($engineRlibs.Count -eq 0) { throw 'Main rd-engine rlib artifacts are absent.' }
+          if (!(Test-Path -LiteralPath $hostExecutable -PathType Leaf)) { throw 'Release Windows host executable is absent.' }
 
           $output = Join-Path $env:RUNNER_TEMP 'rd-engine-artifacts'
           New-Item -ItemType Directory -Force $output | Out-Null
           $testBinaries + $engineRlibs | Copy-Item -Destination $output
+          Copy-Item -LiteralPath $hostExecutable -Destination $output
 
           $provenance = Join-Path $output 'source-provenance.txt'
           "repository=$env:GITHUB_REPOSITORY" | Set-Content -LiteralPath $provenance

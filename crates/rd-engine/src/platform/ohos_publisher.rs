@@ -27,6 +27,29 @@ pub enum Codec {
     H264,
     H265,
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PublisherBackend {
+    Auto,
+    DxgiNvenc,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CodecSelection {
+    Auto,
+    H264,
+    H265,
+}
+#[derive(Debug, Clone)]
+pub struct PublisherDisplay {
+    pub width: i32,
+    pub height: i32,
+    pub name: String,
+}
+pub fn probe_display(
+    _backend: PublisherBackend,
+    _output_index: usize,
+) -> Result<PublisherDisplay, PublisherError> {
+    Err(PublisherError::UnsupportedPlatform)
+}
 #[derive(Debug, Clone, Copy)]
 pub struct SupportedCodecs {
     pub h264: bool,
@@ -55,6 +78,12 @@ pub fn supported_codecs() -> Result<SupportedCodecs, PublisherError> {
         Err(PublisherError::UnsupportedPlatform)
     }
 }
+pub fn supported_codecs_for(config: &PublisherConfig) -> Result<SupportedCodecs, PublisherError> {
+    if config.backend == PublisherBackend::DxgiNvenc || config.output_index != 0 {
+        return Err(PublisherError::BackendUnavailable);
+    }
+    supported_codecs()
+}
 #[derive(Debug, Clone, Copy)]
 pub struct PublisherConfig {
     pub codec: Codec,
@@ -64,6 +93,8 @@ pub struct PublisherConfig {
     pub bitrate: i64,
     pub max_queued_units: usize,
     pub max_queued_bytes: usize,
+    pub backend: PublisherBackend,
+    pub output_index: usize,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PublisherError {
@@ -98,6 +129,8 @@ pub enum PublisherError {
     OwnerLimit,
     QuarantinePresent,
     ReclamationUnconfirmed,
+    BackendUnavailable,
+    OutputNotFound,
 }
 impl std::fmt::Display for PublisherError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -164,6 +197,9 @@ impl Publisher {
     /// Open/permission-start and native destruction never run on UI/IO threads.
     /// Returns after start REQUEST; stats/recv still await actual system consent.
     pub async fn open(config: PublisherConfig) -> Result<Self, PublisherError> {
+        if config.backend == PublisherBackend::DxgiNvenc || config.output_index != 0 {
+            return Err(PublisherError::BackendUnavailable);
+        }
         if config.fps > 60 {
             return Err(PublisherError::ScreenSourceLimitedTo60);
         }

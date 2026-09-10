@@ -7,8 +7,7 @@ use crate::{
         Permissions, PrimaryPolicy,
     },
     handshake::{HostIdentity, Security},
-    media_capability,
-    publisher::{Codec, EncodedUnit, Publisher, PublisherConfig},
+    publisher::{Codec, CodecSelection, EncodedUnit, Publisher, PublisherBackend, PublisherConfig},
     session::{AuthenticatedParts, HostEvent, HostSession},
     transport::{WireReader, WireWriter},
 };
@@ -44,6 +43,10 @@ pub struct HostOptions {
     /// Screen source bound, not advertised codec-only throughput.
     pub fps: u32,
     pub bitrate: i64,
+    pub platform: String,
+    pub publisher_backend: PublisherBackend,
+    pub output_index: usize,
+    pub codec_selection: CodecSelection,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -135,8 +138,9 @@ impl Host {
             || !(1..=8192).contains(&options.width)
             || !(1..=8192).contains(&options.height)
             || i64::from(options.width) * i64::from(options.height) > 33_554_432
-            || !(1..=60).contains(&options.fps)
+            || !(1..=240).contains(&options.fps)
             || !(100_000..=200_000_000).contains(&options.bitrate)
+            || options.platform.is_empty()
         {
             return Err(HostError::InvalidOptions);
         }
@@ -260,20 +264,33 @@ struct Encoders {
     h264: bool,
     h265: bool,
 }
-fn actual_encoder(
-    value: &Result<media_capability::AdvertisedCodec, media_capability::CapabilityError>,
-) -> bool {
-    value.as_ref().is_ok_and(|v| {
-        v.hardware
-            && !v.codec_name.is_empty()
-            && v.native_buffer_formats
-                .as_ref()
-                .is_ok_and(|f| !f.is_empty())
-    })
+fn publisher_config(options: &HostOptions, codec: Codec, fps: u32) -> PublisherConfig {
+    PublisherConfig {
+        codec,
+        width: options.width,
+        height: options.height,
+        fps,
+        bitrate: options.bitrate,
+        max_queued_units: 8,
+        max_queued_bytes: 32 * 1024 * 1024,
+        backend: options.publisher_backend,
+        output_index: options.output_index,
+    }
 }
-fn encoders() -> Result<Encoders, HostError> {
-    let h265 = actual_encoder(&media_capability::query_hevc_hardware_capabilities().encoder);
-    let h264 = actual_encoder(&media_capability::query_h264_hardware_encoder());
+fn encoders(options: &HostOptions) -> Result<Encoders, HostError> {
+    let supported = crate::publisher::supported_codecs_for(&publisher_config(
+        options,
+        Codec::H264,
+        options.fps,
+    ))
+    .map_err(|_| HostError::NoHardwareCodec)?;
+    let mut h264 = supported.h264;
+    let mut h265 = supported.h265;
+    match options.codec_selection {
+        CodecSelection::Auto => {}
+        CodecSelection::H264 => h265 = false,
+        CodecSelection::H265 => h264 = false,
+    }
     if !h264 && !h265 {
         return Err(HostError::NoHardwareCodec);
     }
@@ -282,7 +299,7 @@ fn encoders() -> Result<Encoders, HostError> {
 fn peer_info(options: &HostOptions, codecs: Encoders) -> PeerInfo {
     PeerInfo {
         hostname: "RustDesk".into(),
-        platform: "HarmonyOS".into(),
+        platform: options.platform.clone(),
         version: "1.4.9".into(),
         displays: vec![DisplayInfo {
             width: options.width,
@@ -303,7 +320,20 @@ fn peer_info(options: &HostOptions, codecs: Encoders) -> PeerInfo {
 }
 
 async fn serve(state: Arc<State>, options: HostOptions) -> Result<(), HostError> {
-    let codecs = tokio::task::spawn_blocking(encoders)
+    let probe_options = HostOptions {
+        listen: options.listen,
+        id: options.id.clone(),
+        signing_key: options.signing_key.clone(),
+        width: options.width,
+        height: options.height,
+        fps: options.fps,
+        bitrate: options.bitrate,
+        platform: options.platform.clone(),
+        publisher_backend: options.publisher_backend,
+        output_index: options.output_index,
+        codec_selection: options.codec_selection,
+    };
+    let codecs = tokio::task::spawn_blocking(move || encoders(&probe_options))
         .await
         .map_err(|_| HostError::NoHardwareCodec)??;
     let listener = TcpListener::bind(options.listen)
@@ -486,15 +516,7 @@ async fn peer(
         options.width,
         options.height,
     ));
-    let config = PublisherConfig {
-        codec,
-        width: options.width,
-        height: options.height,
-        fps,
-        bitrate: options.bitrate,
-        max_queued_units: 8,
-        max_queued_bytes: 32 * 1024 * 1024,
-    };
+    let config = publisher_config(options, codec, fps);
     let mut sender = tokio::spawn(publish(
         state.clone(),
         parts.writer,

@@ -1,4 +1,5 @@
 fn main() {
+    println!("cargo:rustc-check-cfg=cfg(dsh_windows_typecheck)");
     println!("cargo:rerun-if-changed=native/windows-capture/rd_desktop_duplication.cpp");
     println!("cargo:rerun-if-changed=native/windows-capture/rd_desktop_duplication.h");
     println!("cargo:rerun-if-changed=native/windows-nvenc/windows_nvenc.cpp");
