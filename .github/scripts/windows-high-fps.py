@@ -133,10 +133,10 @@ def package():
         'acceptance': 'Build/package checks only; GPU, H265 and high-refresh runtime not tested.',
         'fpsHintPolicy': 'Initialization only: set the requested FPS before connecting; later changes need an existing rebuild or reconnect.',
         'zeroCopyAcceptance': 'Not achieved: existing Windows GPU backends still copy or convert into additional textures. No strict-zero-copy claim.',
-        'scope': 'Hardware encoder initialization hint plus opt-in sender-stage diagnostics; sender ABR, pacing, codec, quality and existing fallback policy are unchanged.',
+        'scope': 'Hardware encoder initialization hint plus always-on Windows sender-stage diagnostics; sender ABR, pacing, codec, quality and existing fallback policy are unchanged.',
         'senderDiagnostics': {
-            'enableEnvironment': 'RUSTDESK_SENDER_TRACE=1',
-            'defaultEnabled': False,
+            'defaultEnabled': True,
+            'activation': 'always_on_windows',
             'readmeSha256': sha256(ROOT / 'docs/WINDOWS_SENDER_DIAGNOSTICS.md'),
             'acceptance': 'Diagnostic build only. Enqueue and successful transport send are not proof of client receipt or display.',
         },

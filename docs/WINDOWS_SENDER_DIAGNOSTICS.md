@@ -1,20 +1,14 @@
 # Windows发送端分段诊断
 
-这是默认关闭的诊断包，不是突破60FPS的修复包。保留现有QoS、补sleep、ACK模式、编码器、分辨率、画质和背压行为；不会自动升级已有Windows安装或修改系统设置。
+这是Windows端默认开启必要发送计量的诊断包，不是突破60FPS的修复包。保留现有QoS、补sleep、ACK模式、编码器、分辨率、画质和背压行为；不会自动升级已有Windows安装、扩大权限、开启全量敏感日志或修改系统设置。
 
-## 启用
+## 启动
 
-仅在准备测试的新进程中设置环境变量。由操作者关闭旧测试程序、确认是否存在仍在承载会话的旧服务，再从本包目录启动。不要用此文档自动终止系统服务或其他远程连接。
+直接双击本包的`rustdesk.exe`即可，不需要PowerShell启动命令或环境变量。不要用此文档自动终止系统服务或其他远程连接。
 
-```powershell
-$env:RUSTDESK_SENDER_TRACE = '1'
-$p = Start-Process -FilePath (Resolve-Path '.\rustdesk.exe') -PassThru
-$p | Select-Object Id, Path, StartTime
-```
+发送计量在该构建的Windows进程中始终开启；非Windows构建不启用。无参数GUI会先尝试连接已有主IPC服务器；成功时只同步配置，新界面不代表会话由新包承载。不要强行另启`--server`或自动停止已有服务。
 
-变量在进程内首次检查时读取并缓存。已经运行的进程或旧系统服务不会因为当前PowerShell设置变量而自动启用。无参数GUI会先尝试连接已有主IPC服务器；成功时只同步配置，新界面不代表会话由新包承载。不要强行另启`--server`或自动停止已有服务。
-
-核对同目录BUILD-METADATA.json的source与交付SHA256SUMS。只有出现同一build和PID的`sender_trace service`/`sender_trace transport`实际发送计量，才能确认诊断到达承载会话的进程。可用任务管理器只读核对该PID的程序路径。没有诊断行只能判为未启用、日志被过滤、没有发送或进程归属未确认，不能记成0FPS。
+核对同目录BUILD-METADATA.json的source与交付SHA256SUMS。只有出现同一build和PID的`sender_trace service`/`sender_trace transport`实际发送计量，才能确认诊断到达承载会话的进程。可用任务管理器只读核对该PID的程序路径。没有诊断行只能判为日志被过滤、没有发送、仍由旧IPC服务承载或进程归属未确认，不能记成0FPS。
 
 release使用现有文件日志，默认级别可记录info，无需额外设置RUST_LOG。已有RUST_LOG若过滤掉info则需先由操作者检查。Windows通常在RustDesk配置根旁的`log`目录；按承载角色还可能在`log\server`或`log\portable-service`。不要混入其他用户、旧包或其他会话日志。
 
@@ -43,7 +37,7 @@ $rows | Set-Content -LiteralPath $out -Encoding utf8
 
 每个聚合使用实际经过时间，而不是无论停顿多久都按一秒计算；窗口帧率为`encoded_frames * 1000 / elapsed_ms`。成功transport send也不证明客户端已收讫、解码或显示。不同线程窗口边界可能不同；按时间范围对齐，不能把两个相近日志行当成同一个帧的端到端延迟。跨设备还需要核对时钟偏差，不能直接相减Windows墙钟和客户端单调计时来声称端到端延迟。
 
-日志只需要诊断字段，不上传完整RustDesk日志、身份、服务器配置、口令、画面或压缩码流。日志仍由既有日志系统落盘，诊断开启后存在少量计时和每秒日志开销，最终性能修复需要关闭计量复验。
+日志只需要诊断字段，不上传完整RustDesk日志、身份、服务器配置、口令、画面或压缩码流。日志仍由既有日志系统落盘，默认计量有少量计时和每秒日志开销。最终性能验收需要量化这部分开销；如需无计量A/B，由开发侧提供专用构建，不要求用户设置环境变量。
 
 ### 日志字段与限制
 
@@ -63,12 +57,8 @@ $rows | Set-Content -LiteralPath $out -Encoding utf8
 
 现有Windows GPU后端仍有额外纹理复制/转换等严格零拷贝缺口。本次没有增加像素搬运，不代表全链已经零拷贝。
 
-## 关闭
+## 结束
 
-关闭本次测试进程后，清除当前PowerShell的进程环境变量，再自行启动常规程序即可。不写永久环境变量。
-
-```powershell
-Remove-Item Env:RUSTDESK_SENDER_TRACE -ErrorAction SilentlyContinue
-```
+结束本次测试时正常退出本包程序即可。本包不写永久环境变量；诊断只增加前述安全聚合行，不自动导出或上传完整日志。无需运行停服务脚本。
 
 本地纯计量测试通过不等于Windows集成编译或NVENC实测通过；构建验证结果以对应CI和交付记录为准。

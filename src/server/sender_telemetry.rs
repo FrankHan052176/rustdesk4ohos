@@ -1,20 +1,12 @@
 use std::{
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        OnceLock,
-    },
+    sync::atomic::{AtomicU64, Ordering},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-static ENABLED: OnceLock<bool> = OnceLock::new();
 static NEXT_CONNECTION_ORDINAL: AtomicU64 = AtomicU64::new(1);
 
 pub fn enabled() -> bool {
-    *ENABLED.get_or_init(|| {
-        cfg!(target_os = "windows")
-            && std::env::var_os("RUSTDESK_SENDER_TRACE").as_deref()
-                == Some(std::ffi::OsStr::new("1"))
-    })
+    cfg!(target_os = "windows")
 }
 
 pub fn next_connection_ordinal() -> u64 {
@@ -315,6 +307,7 @@ mod tests {
 
     #[test]
     fn service_window_uses_real_elapsed_and_resets_multiframe_counts() {
+        assert_eq!(enabled(), cfg!(target_os = "windows"));
         let start = Instant::now();
         let mut stats = ServiceTelemetry::new(start, 120, Duration::from_micros(8_333));
         stats.capture(Duration::from_millis(3), CaptureOutcome::Ok);
