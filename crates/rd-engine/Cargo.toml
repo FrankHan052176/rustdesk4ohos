@@ -1,0 +1,25 @@
+[package]
+name = "rd-engine"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "AGPL-3.0-only"
+publish = false
+
+# Independent build: the replacement runtime must not link the old app runtime.
+[workspace]
+resolver = "3"
+
+[features]
+# A double-click Windows candidate includes the modern producer contract without
+# requiring an environment variable or non-default Cargo feature.
+default = ["windows-modern-producer"]
+windows-modern-producer = []
+
+[dependencies]
+hbb_common = { path = "../../libs/hbb_common" }
+tokio = { version = "=1.44.2", features = ["rt-multi-thread", "macros", "net", "sync", "time", "io-util"] }
+tokio-util = { version = "=0.7.15", features = ["codec", "rt"] }
+
+[build-dependencies]
+cc = "1"

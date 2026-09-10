@@ -1,0 +1,112 @@
+name: Modern rd-engine Windows
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/modern-rd-engine-windows.yml
+      - crates/rd-engine/**
+      - libs/hbb_common/**
+  pull_request:
+    paths:
+      - .github/workflows/modern-rd-engine-windows.yml
+      - crates/rd-engine/**
+      - libs/hbb_common/**
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUST_VERSION: '1.95.0'
+  CARGO_TERM_COLOR: never
+
+jobs:
+  test-windows-modern-producer:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: x86_64-pc-windows-msvc
+          components: rustfmt
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          prefix-key: modern-rd-engine-windows-x64-rust-1.95-v1
+          workspaces: crates/rd-engine
+      - name: Check formatting
+        run: cargo fmt --check --manifest-path crates/rd-engine/Cargo.toml
+      - name: Reject forbidden native fallback operations
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $sources = @(
+            'crates/rd-engine/native/windows-capture/rd_desktop_duplication.cpp',
+            'crates/rd-engine/native/windows-nvenc/windows_nvenc.cpp'
+          )
+          foreach ($source in $sources) {
+            if (!(Test-Path -LiteralPath $source -PathType Leaf)) {
+              throw "Required native source is missing: $source"
+            }
+          }
+          $forbidden = 'CopyResource|CopySubresourceRegion|\bMap\s*\(|UpdateSubresource|D3D11_USAGE_STAGING|\bWARP\b|D3D_DRIVER_TYPE_WARP|\bGDI\b|CreateCompatibleDC|BitBlt|StretchBlt|GetDIBits|SetDIBits|CLSID_CMSH264EncoderMFT|\bsoftware\s+encoder\b|sws_scale|\b(?:I420|NV12|ARGB)Scale\s*\('
+          $matches = Select-String -LiteralPath $sources -Pattern $forbidden -CaseSensitive:$false
+          if ($matches) {
+            $matches | ForEach-Object { Write-Error "$($_.Path):$($_.LineNumber): $($_.Line.Trim())" }
+            throw 'Forbidden copy, mapping, staging, software fallback, GDI, or scaling operation found in native implementation files.'
+          }
+      - name: Test default windows-modern-producer
+        run: cargo test --locked --target x86_64-pc-windows-msvc --manifest-path crates/rd-engine/Cargo.toml
+      - name: Collect engine artifacts and source provenance
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $deps = 'crates/rd-engine/target/x86_64-pc-windows-msvc/debug/deps'
+          if (!(Test-Path -LiteralPath $deps -PathType Container)) {
+            throw "Main build artifact directory is missing: $deps"
+          }
+          $testBinaries = @(Get-ChildItem -LiteralPath $deps -File -Filter '*.exe')
+          $engineRlibs = @(Get-ChildItem -LiteralPath $deps -File -Filter '*rd_engine*.rlib')
+          if ($testBinaries.Count -eq 0) { throw 'Main engine test binaries are absent.' }
+          if ($engineRlibs.Count -eq 0) { throw 'Main rd-engine rlib artifacts are absent.' }
+
+          $output = Join-Path $env:RUNNER_TEMP 'rd-engine-artifacts'
+          New-Item -ItemType Directory -Force $output | Out-Null
+          $testBinaries + $engineRlibs | Copy-Item -Destination $output
+
+          $provenance = Join-Path $output 'source-provenance.txt'
+          "repository=$env:GITHUB_REPOSITORY" | Set-Content -LiteralPath $provenance
+          "commit=$env:GITHUB_SHA" | Add-Content -LiteralPath $provenance
+          "rust_target=x86_64-pc-windows-msvc" | Add-Content -LiteralPath $provenance
+          "cargo_features=default (windows-modern-producer)" | Add-Content -LiteralPath $provenance
+          foreach ($source in @(
+            'crates/rd-engine/native/windows-capture/rd_desktop_duplication.cpp',
+            'crates/rd-engine/native/windows-nvenc/windows_nvenc.cpp'
+          )) {
+            $hash = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash.ToLowerInvariant()
+            "sha256=$hash path=$source" | Add-Content -LiteralPath $provenance
+          }
+          foreach ($origin in @(
+            'crates/rd-engine/native/windows-capture/ORIGIN.md',
+            'crates/rd-engine/native/windows-nvenc/ORIGIN.md'
+          )) {
+            if (Test-Path -LiteralPath $origin -PathType Leaf) {
+              "--- $origin ---" | Add-Content -LiteralPath $provenance
+              Get-Content -LiteralPath $origin | Add-Content -LiteralPath $provenance
+            }
+          }
+          "RD_ENGINE_ARTIFACTS=$output" >> $env:GITHUB_ENV
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: modern-rd-engine-windows-x64-${{ github.sha }}
+          path: ${{ env.RD_ENGINE_ARTIFACTS }}
+          if-no-files-found: error
+          retention-days: 14
