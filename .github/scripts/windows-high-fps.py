@@ -133,16 +133,24 @@ def package():
         'acceptance': 'Build/package checks only; GPU, H265 and high-refresh runtime not tested.',
         'fpsHintPolicy': 'Initialization only: set the requested FPS before connecting; later changes need an existing rebuild or reconnect.',
         'zeroCopyAcceptance': 'Not achieved: existing Windows GPU backends still copy or convert into additional textures. No strict-zero-copy claim.',
-        'scope': 'Hardware encoder initialization hint and isolated Windows build only; sender ABR and existing fallback policy are unchanged.',
+        'scope': 'Hardware encoder initialization hint plus opt-in sender-stage diagnostics; sender ABR, pacing, codec, quality and existing fallback policy are unchanged.',
+        'senderDiagnostics': {
+            'enableEnvironment': 'RUSTDESK_SENDER_TRACE=1',
+            'defaultEnabled': False,
+            'readmeSha256': sha256(ROOT / 'docs/WINDOWS_SENDER_DIAGNOSTICS.md'),
+            'acceptance': 'Diagnostic build only. Enqueue and successful transport send are not proof of client receipt or display.',
+        },
         'optionalResources': 'USB virtual-display driver and remote-printer driver not bundled; physical-display remote control is the intended use.',
         'unsigned': True,
     }
     (bundle / 'BUILD-METADATA.json').write_text(json.dumps(metadata, indent=2))
     (bundle / 'WINDOWS-COMPATIBILITY-OVERLAY.json').write_bytes(
         (ROOT / 'windows-compatibility-overlay.json').read_bytes())
+    (bundle / 'WINDOWS-SENDER-DIAGNOSTICS.md').write_bytes(
+        (ROOT / 'docs/WINDOWS_SENDER_DIAGNOSTICS.md').read_bytes())
     output = ROOT / 'high-fps-output'
     output.mkdir(exist_ok=False)
-    archive = output / f'rustdesk-high-fps-windows-x64-{sha[:12]}-unsigned.zip'
+    archive = output / f'rustdesk-sender-diagnostic-windows-x64-{sha[:12]}-unsigned.zip'
     with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as target:
         for path in sorted(bundle.rglob('*')):
             if path.is_file():
@@ -151,6 +159,9 @@ def package():
         require(target.testzip() is None, 'ZIP CRC validation failed')
         require(all(f'rustdesk/{name}' in target.namelist() for name in required),
                 'ZIP missing required runtime entries')
+        require(target.read('rustdesk/WINDOWS-SENDER-DIAGNOSTICS.md') ==
+                (ROOT / 'docs/WINDOWS_SENDER_DIAGNOSTICS.md').read_bytes(),
+                'ZIP sender diagnostic guide differs from this source')
     (output / 'SHA256SUMS.txt').write_text(f'{sha256(archive)}  {archive.name}\n')
     (output / 'BUILD-METADATA.json').write_text(json.dumps(metadata, indent=2))
     print(f'Complete unsigned runtime: {archive.name}')

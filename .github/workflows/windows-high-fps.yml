@@ -11,6 +11,9 @@ on:
       - .github/scripts/windows-high-fps.py
       - src/server/video_qos.rs
       - src/server/video_service.rs
+      - src/server/connection.rs
+      - src/server/sender_telemetry.rs
+      - docs/WINDOWS_SENDER_DIAGNOSTICS.md
       - libs/scrap/src/common/vram.rs
       - libs/scrap/src/common/hwcodec.rs
       - libs/scrap/examples/benchmark.rs
@@ -30,6 +33,7 @@ env:
   VCPKG_DEFAULT_TRIPLET: x64-windows-static
   VCPKG_DEFAULT_HOST_TRIPLET: x64-windows-static
   CARGO_TERM_COLOR: never
+  RUSTDESK_DIAGNOSTIC_BUILD: ${{ github.sha }}
 
 jobs:
   windows-x64:
@@ -60,6 +64,11 @@ jobs:
           toolchain: ${{ env.RUST_VERSION }}
           targets: x86_64-pc-windows-msvc
           components: rustfmt
+      - name: Test sender telemetry accounting
+        run: |
+          set -euo pipefail
+          rustc --edition=2021 --test src/server/sender_telemetry.rs -o "$RUNNER_TEMP/sender-telemetry-tests.exe"
+          "$RUNNER_TEMP/sender-telemetry-tests.exe"
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           prefix-key: high-fps-windows-x64-rust-1.95-v1

@@ -670,6 +670,13 @@ fn run(vs: VideoService) -> ResultType<()> {
     let capture_width = c.width;
     let capture_height = c.height;
     let (mut second_instant, mut send_counter) = (Instant::now(), 0);
+    let mut sender_trace = super::sender_telemetry::enabled().then(|| {
+        super::sender_telemetry::ServiceTelemetry::new(
+            Instant::now(),
+            VIDEO_QOS.lock().unwrap().fps(),
+            spf,
+        )
+    });
 
     while sp.ok() {
         #[cfg(windows)]
@@ -683,6 +690,9 @@ fn run(vs: VideoService) -> ResultType<()> {
             &mut second_instant,
             &sp.name(),
         )?;
+        if let Some(trace) = sender_trace.as_mut() {
+            trace.qos(VIDEO_QOS.lock().unwrap().fps(), spf);
+        }
         if sp.is_option_true(OPTION_REFRESH) {
             if vs.source.is_monitor() {
                 let _ = try_broadcast_display_changed(&sp, display_idx, &c, true);
@@ -736,7 +746,19 @@ fn run(vs: VideoService) -> ResultType<()> {
 
         let time = now - start;
         let ms = (time.as_secs() * 1000 + time.subsec_millis() as u64) as i64;
-        let res = match c.frame(spf) {
+        let capture_begin = sender_trace.as_ref().map(|_| Instant::now());
+        let captured = c.frame(spf);
+        if let (Some(trace), Some(capture_begin)) = (sender_trace.as_mut(), capture_begin) {
+            let outcome = match &captured {
+                Ok(_) => super::sender_telemetry::CaptureOutcome::Ok,
+                Err(err) if err.kind() == WouldBlock => {
+                    super::sender_telemetry::CaptureOutcome::WouldBlock
+                }
+                Err(_) => super::sender_telemetry::CaptureOutcome::Error,
+            };
+            trace.capture(capture_begin.elapsed(), outcome);
+        }
+        let res = match captured {
             Ok(frame) => {
                 repeat_encode_counter = 0;
                 if frame.valid() {
@@ -799,6 +821,7 @@ fn run(vs: VideoService) -> ResultType<()> {
                         &mut first_frame,
                         capture_width,
                         capture_height,
+                        sender_trace.as_mut(),
                     )?;
                     frame_controller.set_send(now, send_conn_ids);
                     send_counter += 1;
@@ -858,6 +881,7 @@ fn run(vs: VideoService) -> ResultType<()> {
                             &mut first_frame,
                             capture_width,
                             capture_height,
+                            sender_trace.as_mut(),
                         )?;
                         frame_controller.set_send(now, send_conn_ids);
                         send_counter += 1;
@@ -900,13 +924,39 @@ fn run(vs: VideoService) -> ResultType<()> {
                 break;
             }
         }
+        if let Some(trace) = sender_trace.as_mut() {
+            trace.fetched_wait(wait_begin.elapsed());
+        }
         DISPLAY_CONN_IDS.lock().unwrap().remove(&display_idx);
 
         let elapsed = now.elapsed();
         // may need to enable frame(timeout)
         log::trace!("{:?} {:?}", time::Instant::now(), elapsed);
         if elapsed < spf {
+            let sleep_begin = sender_trace.as_ref().map(|_| Instant::now());
             std::thread::sleep(spf - elapsed);
+            if let (Some(trace), Some(sleep_begin)) = (sender_trace.as_mut(), sleep_begin) {
+                trace.sleep(sleep_begin.elapsed());
+            }
+        }
+        if let Some(snapshot) = sender_trace
+            .as_mut()
+            .and_then(|trace| trace.take_if_due(Instant::now()))
+        {
+            log::info!(
+                "sender_trace service pid={} build={} unix_ms={} display={} elapsed_ms={:.3} empty={} qos_fps={}/{}/{} spf_ms={:.3} capture_calls={} capture_ok={} capture_would_block={} capture_errors={} capture_total_ms={:.3} capture_max_ms={:.3} encode_calls={} encoded_frames={} encode_errors={} encode_total_ms={:.3} encode_max_ms={:.3} dispatch_attempt_messages={} dispatch_attempt_frames={} payload_bytes={} fetched_wait_total_ms={:.3} fetched_wait_max_ms={:.3} sleep_total_ms={:.3} sleep_max_ms={:.3}",
+                std::process::id(), super::sender_telemetry::build_label(),
+                super::sender_telemetry::unix_ms(), display_idx, snapshot.elapsed.as_secs_f64() * 1000.0,
+                u8::from(snapshot.capture_calls == 0 && snapshot.encode_calls == 0),
+                snapshot.qos_latest, snapshot.qos_min, snapshot.qos_max, snapshot.spf.as_secs_f64() * 1000.0,
+                snapshot.capture_calls, snapshot.capture_ok, snapshot.capture_would_block, snapshot.capture_errors,
+                snapshot.capture_total.as_secs_f64() * 1000.0, snapshot.capture_max.as_secs_f64() * 1000.0,
+                snapshot.encode_calls, snapshot.encoded_frames, snapshot.encode_errors,
+                snapshot.encode_total.as_secs_f64() * 1000.0, snapshot.encode_max.as_secs_f64() * 1000.0,
+                snapshot.dispatch_attempt_messages, snapshot.dispatch_attempt_frames, snapshot.payload_bytes,
+                snapshot.fetched_wait_total.as_secs_f64() * 1000.0, snapshot.fetched_wait_max.as_secs_f64() * 1000.0,
+                snapshot.sleep_total.as_secs_f64() * 1000.0, snapshot.sleep_max.as_secs_f64() * 1000.0,
+            );
         }
     }
 
@@ -1172,6 +1222,7 @@ fn handle_one_frame(
     first_frame: &mut bool,
     width: usize,
     height: usize,
+    mut sender_trace: Option<&mut super::sender_telemetry::ServiceTelemetry>,
 ) -> ResultType<HashSet<i32>> {
     sp.snapshot(|sps| {
         // so that new sub and old sub share the same encoder after switch
@@ -1185,8 +1236,15 @@ fn handle_one_frame(
     let mut send_conn_ids: HashSet<i32> = Default::default();
     let first = *first_frame;
     *first_frame = false;
+    let encode_begin = sender_trace.as_ref().map(|_| Instant::now());
     match encoder.encode_to_message(frame, ms) {
         Ok(mut vf) => {
+            let mut encoded_frames = 0;
+            if let (Some(trace), Some(encode_begin)) = (sender_trace.as_deref_mut(), encode_begin) {
+                let (frames, payload_bytes) = video_frame_stats(&vf);
+                encoded_frames = frames;
+                trace.encode(encode_begin.elapsed(), frames, payload_bytes, true);
+            }
             *encode_fail_counter = 0;
             vf.display = display as _;
             let mut msg = Message::new();
@@ -1197,8 +1255,16 @@ fn handle_one_frame(
                 .as_mut()
                 .map(|r| r.write_message(&msg, width, height));
             send_conn_ids = sp.send_video_frame(msg);
+            if let Some(trace) = sender_trace.as_deref_mut() {
+                // ServiceTmpl returns every recipient id after attempting local dispatch;
+                // ConnInner::send does not report channel success, so this is not "queued".
+                trace.dispatch_attempt(send_conn_ids.len(), encoded_frames);
+            }
         }
         Err(e) => {
+            if let (Some(trace), Some(encode_begin)) = (sender_trace.as_deref_mut(), encode_begin) {
+                trace.encode(encode_begin.elapsed(), 0, 0, false);
+            }
             *encode_fail_counter += 1;
             // Encoding errors are not frequent except on Android
             if !cfg!(target_os = "android") {
@@ -1230,6 +1296,23 @@ fn handle_one_frame(
         }
     }
     Ok(send_conn_ids)
+}
+
+pub(crate) fn video_frame_stats(vf: &VideoFrame) -> (usize, usize) {
+    let frames = match vf.union.as_ref() {
+        Some(video_frame::Union::Vp8s(frames)) => &frames.frames,
+        Some(video_frame::Union::Vp9s(frames)) => &frames.frames,
+        Some(video_frame::Union::Av1s(frames)) => &frames.frames,
+        Some(video_frame::Union::H264s(frames)) => &frames.frames,
+        Some(video_frame::Union::H265s(frames)) => &frames.frames,
+        _ => return (0, 0),
+    };
+    (
+        frames.len(),
+        frames.iter().fold(0usize, |total, frame| {
+            total.saturating_add(frame.data.len())
+        }),
+    )
 }
 
 #[inline]

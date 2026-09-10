@@ -657,6 +657,19 @@ impl Connection {
         {
             (_tx_clip, rx_clip) = mpsc::unbounded_channel::<i32>();
         }
+        let mut sender_trace = super::sender_telemetry::enabled().then(|| {
+            super::sender_telemetry::TransportTelemetry::new(
+                std::time::Instant::now(),
+                super::sender_telemetry::next_connection_ordinal(),
+            )
+        });
+        if let Some(trace) = sender_trace.as_ref() {
+            log::info!(
+                "sender_trace transport_open pid={} build={} unix_ms={} scope=connection_all_displays connection={}",
+                std::process::id(), super::sender_telemetry::build_label(),
+                super::sender_telemetry::unix_ms(), trace.ordinal,
+            );
+        }
 
         loop {
             tokio::select! {
@@ -1043,7 +1056,33 @@ impl Connection {
                             video_service::notify_video_frame_fetched(vf.display as usize, id, Some(instant.into()));
                         }
                     }
-                    if let Err(err) = conn.stream.send(&value as &Message).await {
+                    let send_begin = sender_trace
+                        .as_ref()
+                        .map(|_| std::time::Instant::now());
+                    let send_result = conn.stream.send(&value as &Message).await;
+                    if let (Some(trace), Some(send_begin)) = (sender_trace.as_mut(), send_begin) {
+                        let send_elapsed = send_begin.elapsed();
+                        let (display, encoded_frames, payload_bytes) = match &value.union {
+                            Some(message::Union::VideoFrame(vf)) => {
+                                let (frames, bytes) = video_service::video_frame_stats(vf);
+                                (vf.display as usize, frames, bytes)
+                            }
+                            _ => (usize::MAX, 0, 0),
+                        };
+                        trace.send_result(send_elapsed, display, encoded_frames, payload_bytes, send_result.is_ok());
+                        if let Some(snapshot) = trace.take_if_due(std::time::Instant::now()) {
+                            log::info!(
+                                "sender_trace transport pid={} build={} unix_ms={} scope=connection_all_displays connection={} window_display={} display_sentinel_minus1=mixed_or_none elapsed_ms={:.3} socket_send_ok_messages={} encoded_frames={} payload_bytes={} socket_send_failures={} socket_send_total_ms={:.3} socket_send_max_ms={:.3}",
+                                std::process::id(), super::sender_telemetry::build_label(),
+                                super::sender_telemetry::unix_ms(), trace.ordinal, snapshot.display,
+                                snapshot.elapsed.as_secs_f64() * 1000.0, snapshot.messages_ok,
+                                snapshot.frames_ok, snapshot.payload_bytes, snapshot.failures,
+                                snapshot.send_total.as_secs_f64() * 1000.0,
+                                snapshot.send_max.as_secs_f64() * 1000.0,
+                            );
+                        }
+                    }
+                    if let Err(err) = send_result {
                         conn.on_close(&err.to_string(), false).await;
                         break;
                     }
@@ -1172,6 +1211,22 @@ impl Connection {
                     }
                 },
             }
+        }
+
+        if let Some((ordinal, snapshot)) = sender_trace.as_mut().and_then(|trace| {
+            trace
+                .finish(std::time::Instant::now())
+                .map(|snapshot| (trace.ordinal, snapshot))
+        }) {
+            log::info!(
+                "sender_trace transport pid={} build={} unix_ms={} scope=connection_all_displays connection={} window_display={} display_sentinel_minus1=mixed_or_none elapsed_ms={:.3} socket_send_ok_messages={} encoded_frames={} payload_bytes={} socket_send_failures={} socket_send_total_ms={:.3} socket_send_max_ms={:.3} closed=1 partial=1",
+                std::process::id(), super::sender_telemetry::build_label(),
+                super::sender_telemetry::unix_ms(), ordinal, snapshot.display,
+                snapshot.elapsed.as_secs_f64() * 1000.0, snapshot.messages_ok,
+                snapshot.frames_ok, snapshot.payload_bytes, snapshot.failures,
+                snapshot.send_total.as_secs_f64() * 1000.0,
+                snapshot.send_max.as_secs_f64() * 1000.0,
+            );
         }
 
         #[cfg(feature = "unix-file-copy-paste")]

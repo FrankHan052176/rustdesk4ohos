@@ -203,6 +203,13 @@ impl VideoQoS {
         }
         if let Some(user) = self.users.get_mut(&id) {
             user.custom_fps = Some(fps);
+            if super::sender_telemetry::enabled() {
+                log::info!(
+                    "sender_trace qos_event pid={} build={} unix_ms={} kind=custom_fps requested={} actual_fps={} highest_fps={}",
+                    std::process::id(), super::sender_telemetry::build_label(),
+                    super::sender_telemetry::unix_ms(), fps, self.fps(), self.highest_fps()
+                );
+            }
         }
     }
 
@@ -212,6 +219,13 @@ impl VideoQoS {
         }
         if let Some(user) = self.users.get_mut(&id) {
             user.auto_adjust_fps = Some(fps);
+            if super::sender_telemetry::enabled() {
+                log::info!(
+                    "sender_trace qos_event pid={} build={} unix_ms={} kind=auto_fps requested={} actual_fps={} highest_fps={}",
+                    std::process::id(), super::sender_telemetry::build_label(),
+                    super::sender_telemetry::unix_ms(), fps, self.fps(), self.highest_fps()
+                );
+            }
         }
     }
 
