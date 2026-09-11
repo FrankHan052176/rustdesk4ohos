@@ -1,6 +1,7 @@
 //! Modern Windows producer contracts: actual D3D11 capture texture -> direct
 //! NVENC resource registration -> H.264/H.265 Annex-B. No staging/readback,
-//! pixel mapping, GLES, software fallback, scaling, repeated frames, or discard.
+//! pixel mapping, GLES, software fallback, scaling, or repeated frames. Capture
+//! updates newer than the negotiated frame interval are released before encode.
 //! The independently implemented Desktop Duplication + direct NVENC backend is
 //! available from `windows_native` on Windows. Runtime capability still fails
 //! closed until the actual adapter, format and exact mode initialize correctly.
@@ -174,6 +175,7 @@ pub struct WindowsPublisher<C, E> {
     encoder: ManuallyDrop<E>,
     config: ProducerConfig,
     force_keyframe: bool,
+    next_encode_pts_us: Option<i64>,
 }
 impl<C: TextureCapture, E: DirectNvenc<C::Frame>> WindowsPublisher<C, E> {
     pub fn open(capture: C, encoder: E, config: ProducerConfig) -> Result<Self, ProducerError> {
@@ -183,6 +185,7 @@ impl<C: TextureCapture, E: DirectNvenc<C::Frame>> WindowsPublisher<C, E> {
             encoder: ManuallyDrop::new(encoder),
             config,
             force_keyframe: true,
+            next_encode_pts_us: None,
         })
     }
     pub fn request_keyframe(&mut self) -> Result<(), ProducerError> {
@@ -194,6 +197,22 @@ impl<C: TextureCapture, E: DirectNvenc<C::Frame>> WindowsPublisher<C, E> {
             return Ok(None);
         };
         validate_texture(self.config, &frame, self.encoder.capability())?;
+        let capture_pts_us = frame.capture_pts_us();
+        if capture_pts_us < 0 {
+            return Err(ProducerError::InvalidTimestamp);
+        }
+        let numerator = u64::from(self.config.fps_numerator.get());
+        let denominator = u64::from(self.config.fps_denominator.get());
+        let interval_us = ((1_000_000_u64 * denominator) / numerator).max(1) as i64;
+        if !self.force_keyframe
+            && let Some(next_pts_us) = self.next_encode_pts_us
+            && capture_pts_us < next_pts_us
+        {
+            // Drop the capture lease before NVENC registration. This keeps
+            // the encoded stream at the negotiated rate without dropping
+            // interdependent H.26x access units after encode.
+            return Ok(None);
+        }
         let requested_keyframe = self.force_keyframe;
         let unit = self.encoder.encode_texture(frame, requested_keyframe)?;
         validate_unit(self.config, &unit)?;
@@ -201,6 +220,16 @@ impl<C: TextureCapture, E: DirectNvenc<C::Frame>> WindowsPublisher<C, E> {
             return Err(ProducerError::EncoderFailed);
         }
         self.force_keyframe = false;
+        self.next_encode_pts_us = Some(match self.next_encode_pts_us {
+            Some(next_pts_us) if !requested_keyframe && capture_pts_us >= next_pts_us => {
+                let elapsed_intervals = capture_pts_us
+                    .saturating_sub(next_pts_us)
+                    .div_euclid(interval_us)
+                    .saturating_add(1);
+                next_pts_us.saturating_add(elapsed_intervals.saturating_mul(interval_us))
+            }
+            _ => capture_pts_us.saturating_add(interval_us),
+        });
         Ok(Some(unit))
     }
     /// Reclaims encoder/in-flight resources before capture. On failure, native

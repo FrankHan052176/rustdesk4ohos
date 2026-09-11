@@ -617,6 +617,12 @@ mod native {
         flags: u32,
     }
     #[repr(C)]
+    #[derive(Default)]
+    struct Timespec {
+        tv_sec: i64,
+        tv_nsec: i64,
+    }
+    #[repr(C)]
     struct Callbacks {
         error: unsafe extern "C" fn(*mut Codec, i32, *mut c_void),
         changed: unsafe extern "C" fn(*mut Codec, *mut Format, *mut c_void),
@@ -626,6 +632,11 @@ mod native {
     const EOS: u32 = 1;
     const SYNC: u32 = 2;
     const CONFIG: u32 = 8;
+    const CLOCK_MONOTONIC: i32 = 1;
+
+    unsafe extern "C" {
+        fn clock_gettime(clock_id: i32, time: *mut Timespec) -> i32;
+    }
 
     #[link(name = "native_media_codecbase")]
     unsafe extern "C" {
@@ -675,7 +686,11 @@ mod native {
         fn OH_VideoDecoder_Stop(codec: *mut Codec) -> i32;
         fn OH_VideoDecoder_Destroy(codec: *mut Codec) -> i32;
         fn OH_VideoDecoder_PushInputBuffer(codec: *mut Codec, index: u32) -> i32;
-        fn OH_VideoDecoder_RenderOutputBuffer(codec: *mut Codec, index: u32) -> i32;
+        fn OH_VideoDecoder_RenderOutputBufferAtTime(
+            codec: *mut Codec,
+            index: u32,
+            render_timestamp_ns: i64,
+        ) -> i32;
         fn OH_VideoDecoder_FreeOutputBuffer(codec: *mut Codec, index: u32) -> i32;
     }
 
@@ -685,6 +700,20 @@ mod native {
         } else {
             Err(DecoderError::Native { api, code })
         }
+    }
+
+    fn monotonic_time_ns() -> Result<i64, DecoderError> {
+        let mut time = Timespec::default();
+        check("clock_gettime(CLOCK_MONOTONIC)", unsafe {
+            clock_gettime(CLOCK_MONOTONIC, &mut time)
+        })?;
+        time.tv_sec
+            .checked_mul(1_000_000_000)
+            .and_then(|seconds| seconds.checked_add(time.tv_nsec))
+            .ok_or(DecoderError::Native {
+                api: "clock_gettime(CLOCK_MONOTONIC)",
+                code: -1,
+            })
     }
 
     struct Context {
@@ -1034,8 +1063,13 @@ mod native {
         let (frame, eos) = output_flags(attr.flags);
         shared.returning_output(buffer.index);
         if frame {
-            check("OH_VideoDecoder_RenderOutputBuffer", unsafe {
-                OH_VideoDecoder_RenderOutputBuffer(codec, buffer.index)
+            // Timestamped rendering lets the surface coalesce multiple decoded
+            // frames targeting one VSYNC and discard stale frames. The plain
+            // RenderOutputBuffer API never drops for display-rate mismatch and
+            // can fill the NativeWindow FIFO for seconds in interactive use.
+            let render_timestamp_ns = monotonic_time_ns()?;
+            check("OH_VideoDecoder_RenderOutputBufferAtTime", unsafe {
+                OH_VideoDecoder_RenderOutputBufferAtTime(codec, buffer.index, render_timestamp_ns)
             })?;
         } else {
             check("OH_VideoDecoder_FreeOutputBuffer", unsafe {
