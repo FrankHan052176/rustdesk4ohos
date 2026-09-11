@@ -639,11 +639,13 @@ mod native {
     }
     #[link(name = "native_media_core")]
     unsafe extern "C" {
+        static OH_MD_KEY_VIDEO_ENABLE_LOW_LATENCY: *const c_char;
         fn OH_AVFormat_CreateVideoFormat(
             mime: *const c_char,
             width: i32,
             height: i32,
         ) -> *mut Format;
+        fn OH_AVFormat_SetIntValue(format: *mut Format, key: *const c_char, value: i32) -> bool;
         fn OH_AVFormat_Destroy(format: *mut Format);
         fn OH_AVBuffer_GetAddr(buffer: *mut NativeBuffer) -> *mut u8;
         fn OH_AVBuffer_GetCapacity(buffer: *mut NativeBuffer) -> i32;
@@ -942,6 +944,15 @@ mod native {
         if format.is_null() {
             return Err(DecoderError::NativeReturnedNull {
                 api: "OH_AVFormat_CreateVideoFormat",
+            });
+        }
+        let low_latency =
+            unsafe { OH_AVFormat_SetIntValue(format, OH_MD_KEY_VIDEO_ENABLE_LOW_LATENCY, 1) };
+        if !low_latency {
+            unsafe { OH_AVFormat_Destroy(format) };
+            return Err(DecoderError::Native {
+                api: "OH_AVFormat_SetIntValue(low_latency)",
+                code: -1,
             });
         }
         let code = unsafe { OH_VideoDecoder_Configure(codec, format) };
