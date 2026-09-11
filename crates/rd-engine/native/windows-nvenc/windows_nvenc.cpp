@@ -352,6 +352,8 @@ extern "C" RD_NVENC_API rd_nvenc_status RD_NVENC_CALL rd_nvenc_create(void *devp
         cfg.rcParams.rateControlMode = NV_ENC_PARAMS_RC_CBR;
         cfg.rcParams.enableLookahead = 0;
         cfg.rcParams.lookaheadDepth = 0;
+        cfg.rcParams.enableTemporalAQ = 0;
+        cfg.rcParams.multiPass = NV_ENC_MULTI_PASS_DISABLED;
         cfg.rcParams.zeroReorderDelay = 1;
         cfg.rcParams.averageBitRate = d->bitrate_bps;
         cfg.rcParams.maxBitRate = d->bitrate_bps;
@@ -362,9 +364,17 @@ extern "C" RD_NVENC_API rd_nvenc_status RD_NVENC_CALL rd_nvenc_create(void *devp
         cfg.rcParams.vbvInitialDelay = cfg.rcParams.vbvBufferSize;
         if (d->codec == RD_NVENC_CODEC_H264) {
             cfg.profileGUID = NV_ENC_H264_PROFILE_HIGH_GUID;
-            cfg.encodeCodecConfig.h264Config.idrPeriod = d->gop_length;
-            cfg.encodeCodecConfig.h264Config.repeatSPSPPS = 1;
-            set_vui(cfg.encodeCodecConfig.h264Config.h264VUIParameters, d->color);
+            auto &h = cfg.encodeCodecConfig.h264Config;
+            h.idrPeriod = d->gop_length;
+            h.repeatSPSPPS = 1;
+            h.hierarchicalPFrames = 0;
+            h.hierarchicalBFrames = 0;
+            h.enableLTR = 0;
+            h.maxNumRefFrames = 1;
+            h.useBFramesAsRef = NV_ENC_BFRAME_REF_MODE_DISABLED;
+            h.numRefL0 = NV_ENC_NUM_REF_FRAMES_1;
+            h.numRefL1 = NV_ENC_NUM_REF_FRAMES_1;
+            set_vui(h.h264VUIParameters, d->color);
         } else {
             cfg.profileGUID =
                 ten_bit ? NV_ENC_HEVC_PROFILE_MAIN10_GUID : NV_ENC_HEVC_PROFILE_MAIN_GUID;
@@ -372,6 +382,12 @@ extern "C" RD_NVENC_API rd_nvenc_status RD_NVENC_CALL rd_nvenc_create(void *devp
             h.idrPeriod = d->gop_length;
             h.repeatSPSPPS = 1;
             h.chromaFormatIDC = 1;
+            h.enableLTR = 0;
+            h.maxNumRefFramesInDPB = 1;
+            h.maxTemporalLayersMinus1 = 0;
+            h.useBFramesAsRef = NV_ENC_BFRAME_REF_MODE_DISABLED;
+            h.numRefL0 = NV_ENC_NUM_REF_FRAMES_1;
+            h.numRefL1 = NV_ENC_NUM_REF_FRAMES_1;
             h.pixelBitDepthMinus8 = (d->input_format == RD_NVENC_INPUT_P010 ||
                                      d->input_format == RD_NVENC_INPUT_RGB10A2)
                                         ? 2
