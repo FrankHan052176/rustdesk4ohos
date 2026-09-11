@@ -271,7 +271,9 @@ fn publisher_config(options: &HostOptions, codec: Codec, fps: u32) -> PublisherC
         height: options.height,
         fps,
         bitrate: options.bitrate,
-        max_queued_units: 8,
+        // Includes the AU currently being written. Two credits keep one ready
+        // frame without accumulating a multi-frame capture-to-display tail.
+        max_queued_units: 2,
         max_queued_bytes: 32 * 1024 * 1024,
         backend: options.publisher_backend,
         output_index: options.output_index,

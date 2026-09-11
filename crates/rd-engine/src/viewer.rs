@@ -39,7 +39,9 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
-const VIDEO_RECORDS: usize = 8;
+// End-to-end low-latency budget: one record may be feeding while one waits.
+// Larger queues preserve throughput by displaying increasingly stale frames.
+const VIDEO_RECORDS: usize = 2;
 const VIDEO_BYTES: usize = 32 * 1024 * 1024;
 const MAX_UNITS_PER_RECORD: usize = 256;
 const COMMANDS: usize = 128;
@@ -911,7 +913,9 @@ async fn feed_loop(
                         codec: next.0,
                         width: next.1.width,
                         height: next.1.height,
-                        max_queued_units: 8,
+                        // One AU may be inside PushInputBuffer while one waits
+                        // for an input callback; do not build a stale decode tail.
+                        max_queued_units: 2,
                         max_queued_bytes: VIDEO_BYTES,
                     },
                     lease,

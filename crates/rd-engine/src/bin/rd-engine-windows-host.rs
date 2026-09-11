@@ -14,7 +14,7 @@ mod windows {
         io::{Read, Write},
         net::SocketAddr,
         path::PathBuf,
-        time::Duration,
+        time::{Duration, Instant},
     };
 
     const IDENTITY_MAGIC: &[u8; 8] = b"RDEID001";
@@ -258,15 +258,17 @@ mod windows {
         let mut last_phase = "";
         let mut last_request = String::new();
         let mut last_error = None;
+        let mut last_metrics = Instant::now();
         loop {
             let snapshot = host.snapshot();
             if snapshot.phase != last_phase {
                 eprintln!(
-                    "phase={} connected={} encrypted={} codec={} sent_units={} sent_bytes={}",
+                    "phase={} connected={} encrypted={} codec={} fps={} sent_units={} sent_bytes={}",
                     snapshot.phase,
                     snapshot.connected,
                     snapshot.encrypted,
                     snapshot.codec,
+                    snapshot.fps,
                     snapshot.sent_units,
                     snapshot.sent_bytes
                 );
@@ -308,6 +310,16 @@ mod windows {
                     eprintln!("host_error={error}");
                 }
                 last_error = snapshot.error;
+            }
+            if snapshot.connected
+                && snapshot.phase == "streaming"
+                && last_metrics.elapsed() >= Duration::from_secs(5)
+            {
+                eprintln!(
+                    "metrics fps={} sent_units={} sent_bytes={}",
+                    snapshot.fps, snapshot.sent_units, snapshot.sent_bytes
+                );
+                last_metrics = Instant::now();
             }
             if snapshot.closed {
                 if let Some(error) = snapshot.error {
