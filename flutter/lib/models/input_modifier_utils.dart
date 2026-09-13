@@ -135,18 +135,13 @@ bool shouldHandleTerminalPasteShortcut({
   if (!isKeyDown && !isKeyRepeat) return false;
   if (logicalKey != LogicalKeyboardKey.keyV) return false;
   if (altPressed) return false;
-  switch (platform) {
-    case TargetPlatform.linux:
-      return controlPressed && !metaPressed && shiftPressed;
-    case TargetPlatform.iOS:
-    case TargetPlatform.macOS:
-      return !controlPressed && metaPressed && !shiftPressed;
-    case TargetPlatform.android:
-    case TargetPlatform.ohos:
-    case TargetPlatform.fuchsia:
-    case TargetPlatform.windows:
-      return controlPressed && !metaPressed && !shiftPressed;
+  if (platform == TargetPlatform.linux) {
+    return controlPressed && !metaPressed && shiftPressed;
   }
+  if (platform == TargetPlatform.iOS || platform == TargetPlatform.macOS) {
+    return !controlPressed && metaPressed && !shiftPressed;
+  }
+  return controlPressed && !metaPressed && !shiftPressed;
 }
 
 /// Returns true when collapsing Row3 should also clear hidden modifier state.
