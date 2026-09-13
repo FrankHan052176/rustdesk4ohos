@@ -2,7 +2,7 @@ import 'dart:io';
 
 final isAndroid_ = Platform.isAndroid;
 final isIOS_ = Platform.isIOS;
-final isOhos_ = Platform.isOhos;
+final isOhos_ = Platform.operatingSystem == 'ohos';
 final isWindows_ = Platform.isWindows;
 final isMacOS_ = Platform.isMacOS;
 final isLinux_ = Platform.isLinux;

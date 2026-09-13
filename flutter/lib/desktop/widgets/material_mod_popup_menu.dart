@@ -1055,16 +1055,9 @@ Future<T?> showMenu<T>({
   assert(items.isNotEmpty);
   assert(debugCheckHasMaterialLocalizations(context));
 
-  switch (Theme.of(context).platform) {
-    case TargetPlatform.iOS:
-    case TargetPlatform.macOS:
-      break;
-    case TargetPlatform.android:
-    case TargetPlatform.ohos:
-    case TargetPlatform.fuchsia:
-    case TargetPlatform.linux:
-    case TargetPlatform.windows:
-      semanticLabel ??= MaterialLocalizations.of(context).popupMenuLabel;
+  final platform = Theme.of(context).platform;
+  if (platform != TargetPlatform.iOS && platform != TargetPlatform.macOS) {
+    semanticLabel ??= MaterialLocalizations.of(context).popupMenuLabel;
   }
 
   final NavigatorState navigator =
