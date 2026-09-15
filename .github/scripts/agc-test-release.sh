@@ -17,8 +17,8 @@ if [[ -z "$AGC_APP_FILE" || ! -f "$AGC_APP_FILE" ]]; then
   echo "Signed App file is missing." >&2
   exit 1
 fi
-if [[ -z "$AGC_PERMISSION_VIDEO_FILE" || ! -f "$AGC_PERMISSION_VIDEO_FILE" ]]; then
-  echo "Permission introduction video is missing." >&2
+if [[ -n "$AGC_PERMISSION_VIDEO_FILE" && ! -f "$AGC_PERMISSION_VIDEO_FILE" ]]; then
+  echo "Permission introduction video is missing: $AGC_PERMISSION_VIDEO_FILE" >&2
   exit 1
 fi
 
@@ -297,15 +297,21 @@ fi
 fetch_group_infos >/dev/null
 app_name=$(basename "$AGC_APP_FILE")
 app_object_id=$(upload_file "$AGC_APP_FILE")
-video_object_id=$(upload_file "$AGC_PERMISSION_VIDEO_FILE")
-permission_intro_videos=$(jq -cn \
-  --arg permission_name 'ohos.permission.INTERCEPT_INPUT_EVENT' \
-  --arg video_object_id "$video_object_id" \
-  '[
-    {lang: "zh-CN", permissionName: $permission_name, deviceType: 4, objectId: $video_object_id},
-    {lang: "zh-CN", permissionName: $permission_name, deviceType: 5, objectId: $video_object_id},
-    {lang: "zh-CN", permissionName: $permission_name, deviceType: 19, objectId: $video_object_id}
-  ]')
+if [[ -n "$AGC_PERMISSION_VIDEO_FILE" ]]; then
+  video_object_id=$(upload_file "$AGC_PERMISSION_VIDEO_FILE")
+  permission_intro_videos=$(jq -cn \
+    --arg permission_name "${AGC_PERMISSION_NAME:-ohos.permission.INTERCEPT_INPUT_EVENT}" \
+    --arg video_object_id "$video_object_id" \
+    '[
+      {lang: "zh-CN", permissionName: $permission_name, deviceType: 4, objectId: $video_object_id},
+      {lang: "zh-CN", permissionName: $permission_name, deviceType: 5, objectId: $video_object_id},
+      {lang: "zh-CN", permissionName: $permission_name, deviceType: 19, objectId: $video_object_id}
+    ]')
+else
+  # This app declares no ACL permission, so AGC needs no introduction video.
+  video_object_id=""
+  permission_intro_videos='[]'
+fi
 write_output agc_app_object_id "$app_object_id"
 write_output agc_video_object_id "$video_object_id"
 write_result
