@@ -214,8 +214,12 @@ jobs:
           AGC_CLIENT_SECRET: ${{ secrets.AGC_CLIENT_SECRET }}
           AGC_APP_ID: '6917615823381371195'
           AGC_API_DOMAIN: ${{ vars.AGC_API_DOMAIN || 'connect-api.cloud.huawei.com' }}
-          AGC_TEST_TYPE: ${{ vars.AGC_TEST_TYPE || '3' }}
-          AGC_TEST_DESC: ${{ vars.AGC_TEST_DESC || format('CI build {0} ({1})', github.run_number, github.sha) }}
+          # The open test window: starts an hour after submission and runs two months.
+          AGC_TEST_DURATION_DAYS: ${{ vars.AGC_TEST_DURATION_DAYS || '60' }}
+          AGC_EVENT_NAME: ${{ github.event_name }}
+          AGC_RUN_ATTEMPT: ${{ github.run_attempt }}
+          AGC_WORKFLOW_SHA: ${{ github.sha }}
+          AGC_PUSH_COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
         run: |
           bash .github/scripts/agc-test-release.sh "rustdesk-$VERSION-ohos-arm64.app"
 
