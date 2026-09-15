@@ -648,7 +648,7 @@ class _PermissionCheckerState extends State<PermissionChecker> {
             translate("Enable clipboard"),
             serverModel.clipboardOk,
             serverModel.toggleClipboard,
-            enabled: !permissionChangeLocked,
+            enabled: !permissionChangeLocked && !serverModel.clipboardChanging,
           ),
         ]));
   }

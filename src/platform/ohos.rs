@@ -83,6 +83,31 @@ impl flutter_rust_bridge::rust2dart::IntoIntoDart<EventToUI> for EventToUI {
     }
 }
 
+impl flutter_rust_bridge::support::IntoDart for crate::flutter_ffi::OhosClipboardData {
+    fn into_dart(self) -> flutter_rust_bridge::support::DartAbi {
+        use flutter_rust_bridge::rust2dart::IntoIntoDart;
+
+        vec![
+            self.text.into_dart(),
+            self.html.into_dart(),
+            self.image.into_into_dart().into_dart(),
+            self.image_format.into_into_dart().into_dart(),
+            self.width.into_into_dart().into_dart(),
+            self.height.into_into_dart().into_dart(),
+        ].into_dart()
+    }
+}
+
+impl flutter_rust_bridge::support::IntoDartExceptPrimitive for crate::flutter_ffi::OhosClipboardData {}
+
+impl flutter_rust_bridge::rust2dart::IntoIntoDart<crate::flutter_ffi::OhosClipboardData>
+    for crate::flutter_ffi::OhosClipboardData
+{
+    fn into_into_dart(self) -> Self {
+        self
+    }
+}
+
 pub fn get_active_username() -> String {
     "ohos".into()
 }
@@ -106,13 +131,16 @@ lazy_static::lazy_static! {
     static ref CLIPBOARDS_HOST: Mutex<Option<MultiClipboards>> = Default::default();
     static ref CLIENT_CLIPBOARD: Mutex<ClientClipboardState> = Default::default();
     static ref CLIENT_RECEIVED_CLIPBOARDS: Mutex<HashMap<SessionID, VecDeque<MultiClipboards>>> = Default::default();
+    static ref FLUTTER_CLIENT_RECEIVED_TEXT: Mutex<Option<String>> = Default::default();
     static ref CLIENT_CLIPBOARD_FILE_ROOTS: Mutex<HashMap<SessionID, PathBuf>> = Default::default();
     static ref CLIENT_CLIPBOARD_CONN_IDS: Mutex<HashMap<String, i32>> = Default::default();
     static ref HOST_INPUT_EVENTS: Mutex<VecDeque<HostInputEvent>> = Default::default();
     static ref HOST_POINTER_POSITION: Mutex<(i32, i32)> = Default::default();
-    static ref HOST_AUDIO: Mutex<VecDeque<Vec<u8>>> = Default::default();
     static ref HOST_RECEIVED_CLIPBOARD: Mutex<Option<MultiClipboards>> = Default::default();
     static ref HOST_SERVER: Mutex<Option<crate::server::ServerPtr>> = Default::default();
+    static ref HOST_CLIPBOARD_FILE_ROOT: Mutex<Option<PathBuf>> = Default::default();
+    static ref HOST_CLIPBOARD_FILES: Mutex<Vec<String>> = Default::default();
+    static ref HOST_CLIPBOARD_FILE_PENDING: Mutex<Option<Vec<String>>> = Default::default();
 }
 
 static HOST_THREAD_STARTED: AtomicBool = AtomicBool::new(false);
@@ -120,7 +148,12 @@ static HOST_ENABLED: AtomicBool = AtomicBool::new(false);
 static HOST_CLIPBOARD_AVAILABLE: AtomicBool = AtomicBool::new(false);
 static HOST_DISPLAY_ID: AtomicU64 = AtomicU64::new(0);
 const HOST_INPUT_EVENTS_CAPACITY: usize = 256;
-const HOST_AUDIO_FRAMES_CAPACITY: usize = 16;
+
+/// Frontend sentinel that selects the controlled-host clipboard channel instead of one
+/// UI session.
+const HOST_CLIPBOARD_SESSION: &str = "host";
+const CLIPBOARD_IMAGE_FORMAT_PNG: &str = "png";
+const CLIPBOARD_IMAGE_FORMAT_RGBA: &str = "rgba";
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -397,6 +430,10 @@ pub(crate) fn host_input_authorized() -> bool {
 
 pub(crate) fn set_host_clipboard_available(available: bool) {
     HOST_CLIPBOARD_AVAILABLE.store(available, Ordering::Release);
+    if !available {
+        CLIPBOARDS_HOST.lock().unwrap().take();
+        HOST_RECEIVED_CLIPBOARD.lock().unwrap().take();
+    }
 }
 
 pub(crate) fn host_clipboard_available() -> bool {
@@ -404,20 +441,30 @@ pub(crate) fn host_clipboard_available() -> bool {
 }
 
 pub fn update_host_text_clipboard(content: String) -> bool {
+    let mut clipboards = CLIPBOARDS_HOST.lock().unwrap();
     if !host_clipboard_available() {
         return false;
     }
-    update_clipboards(
-        false,
-        MultiClipboards {
-            clipboards: vec![Clipboard {
-                content: content.into_bytes().into(),
-                format: ClipboardFormat::Text.into(),
-                ..Default::default()
-            }],
+    *clipboards = Some(MultiClipboards {
+        clipboards: vec![Clipboard {
+            content: content.into_bytes().into(),
+            format: ClipboardFormat::Text.into(),
             ..Default::default()
-        },
-    );
+        }],
+        ..Default::default()
+    });
+    true
+}
+
+/// Replace the pending host clipboard with a rich payload (text, html or image).
+///
+/// The host clipboard is a single slot owned by the controlled side, so the newest
+/// local copy wins.
+pub fn update_host_clipboards(clipboards: MultiClipboards) -> bool {
+    if !host_clipboard_available() {
+        return false;
+    }
+    *CLIPBOARDS_HOST.lock().unwrap() = Some(clipboards);
     true
 }
 
@@ -460,21 +507,6 @@ pub fn poll_host_input_event_json() -> Option<String> {
     poll_host_input_event().and_then(|event| serde_json::to_string(&event).ok())
 }
 
-pub fn push_host_audio_f32_stereo(data: &[u8]) {
-    if data.is_empty() || data.len() % std::mem::size_of::<f32>() != 0 {
-        return;
-    }
-    let mut frames = HOST_AUDIO.lock().unwrap();
-    if frames.len() >= HOST_AUDIO_FRAMES_CAPACITY {
-        frames.pop_front();
-    }
-    frames.push_back(data.to_vec());
-}
-
-pub(crate) fn take_host_audio_f32_stereo() -> Option<Vec<u8>> {
-    HOST_AUDIO.lock().unwrap().pop_front()
-}
-
 pub fn start_host() -> bool {
     enable_host(false)
 }
@@ -515,6 +547,7 @@ pub fn restart_host() {
     let _ = enable_host(true);
 }
 
+
 pub fn stop_host() {
     hbb_common::config::Config::set_option("stop-service".to_owned(), "Y".to_owned());
     let was_enabled = HOST_ENABLED.swap(false, Ordering::SeqCst);
@@ -522,10 +555,8 @@ pub fn stop_host() {
     crate::ui_cm_interface::clear_host_clients();
     HOST_INPUT_EVENTS.lock().unwrap().clear();
     *HOST_POINTER_POSITION.lock().unwrap() = (0, 0);
-    HOST_AUDIO.lock().unwrap().clear();
     scrap::ohos::reset_screen_state();
-    HOST_RECEIVED_CLIPBOARD.lock().unwrap().take();
-    HOST_CLIPBOARD_AVAILABLE.store(false, Ordering::Release);
+    set_host_clipboard_available(false);
     input::cancel_authorization();
     if was_enabled && HOST_THREAD_STARTED.load(Ordering::SeqCst) {
         crate::RendezvousMediator::restart();
@@ -554,13 +585,13 @@ pub fn host_close_client(id: i32) -> bool {
 }
 
 pub(crate) fn receive_host_clipboards(mut clipboards: MultiClipboards) {
-    for clipboard in &mut clipboards.clipboards {
-        if clipboard.compress {
-            clipboard.content = hbb_common::compress::decompress(&clipboard.content).into();
-            clipboard.compress = false;
-        }
+    if !bound_received_clipboards(&mut clipboards) {
+        return;
     }
-    *HOST_RECEIVED_CLIPBOARD.lock().unwrap() = Some(clipboards);
+    let mut pending = HOST_RECEIVED_CLIPBOARD.lock().unwrap();
+    if host_clipboard_available() {
+        *pending = Some(clipboards);
+    }
 }
 
 pub fn take_host_received_clipboards() -> Option<MultiClipboards> {
@@ -586,6 +617,7 @@ pub fn set_client_clipboard_enabled(enabled: bool) {
     state.enabled = enabled;
     if !enabled {
         state.clipboards.take();
+        FLUTTER_CLIENT_RECEIVED_TEXT.lock().unwrap().take();
     }
 }
 
@@ -614,41 +646,47 @@ pub fn update_client_clipboards(clipboards: MultiClipboards) -> bool {
     true
 }
 
+
+pub(crate) fn take_client_received_text_clipboard() -> Option<String> {
+    let required = crate::flutter::sessions::is_ohos_client_clipboard_required();
+    let text = FLUTTER_CLIENT_RECEIVED_TEXT.lock().unwrap().take();
+    if required { text } else { None }
+}
+
 pub(crate) fn receive_client_clipboards(session_id: &SessionID, mut clipboards: MultiClipboards) {
-    const MAX_CLIENT_CLIPBOARD_BYTES: usize = 64 * 1024 * 1024;
-    const MAX_CLIENT_CLIPBOARD_FORMATS: usize = 16;
-    let mut aggregate_size = 0usize;
-    clipboards.clipboards.truncate(MAX_CLIENT_CLIPBOARD_FORMATS);
-    clipboards.clipboards.retain_mut(|clipboard| {
-        if clipboard.compress {
-            let Ok(content) = decompress_clipboard_content(
-                &clipboard.content,
-                MAX_CLIENT_CLIPBOARD_BYTES,
-            ) else {
-                return false;
-            };
-            clipboard.content = content.into();
-            clipboard.compress = false;
-        }
-        let Some(next_size) = aggregate_size.checked_add(clipboard.content.len()) else {
-            return false;
-        };
-        if next_size > MAX_CLIENT_CLIPBOARD_BYTES {
-            return false;
-        }
-        aggregate_size = next_size;
-        true
-    });
-    if clipboards.clipboards.is_empty() {
+    if !bound_received_clipboards(&mut clipboards) {
         return;
     }
-    let mut queues = CLIENT_RECEIVED_CLIPBOARDS.lock().unwrap();
-    let queue = queues.entry(*session_id).or_default();
-    if queue.len() >= 4 {
-        queue.pop_front();
+    #[cfg(feature = "ohos-flutter")]
+    {
+        if let Some(text) = clipboards.clipboards.iter().find_map(|clipboard| {
+            (clipboard.format.enum_value() == Ok(ClipboardFormat::Text))
+                .then(|| String::from_utf8(clipboard.content.to_vec()).ok())
+                .flatten()
+        }) {
+            *FLUTTER_CLIENT_RECEIVED_TEXT.lock().unwrap() = Some(text);
+        }
+        // Images and files are large and only the newest remote copy is meaningful, so
+        // the frontend drains one payload per session instead of a history.
+        let mut queues = CLIENT_RECEIVED_CLIPBOARDS.lock().unwrap();
+        let queue = queues.entry(*session_id).or_default();
+        queue.clear();
+        queue.push_back(clipboards);
     }
-    queue.push_back(clipboards);
+    #[cfg(not(feature = "ohos-flutter"))]
+    {
+        let mut queues = CLIENT_RECEIVED_CLIPBOARDS.lock().unwrap();
+        let queue = queues.entry(*session_id).or_default();
+        if queue.len() >= 4 {
+            queue.pop_front();
+        }
+        queue.push_back(clipboards);
+    }
 }
+
+/// Upper bound for one received clipboard update, applied on both clipboard sides.
+const MAX_RECEIVED_CLIPBOARD_BYTES: usize = 64 * 1024 * 1024;
+const MAX_RECEIVED_CLIPBOARD_FORMATS: usize = 16;
 
 fn decompress_clipboard_content(data: &[u8], limit: usize) -> Result<Vec<u8>, String> {
     let decoder = zstd::Decoder::new(data).map_err(|error| error.to_string())?;
@@ -663,6 +701,35 @@ fn decompress_clipboard_content(data: &[u8], limit: usize) -> Result<Vec<u8>, St
     Ok(content)
 }
 
+/// Decompress in place and keep only payloads inside the receive limits.
+///
+/// Returns `false` when nothing usable remains, so the caller drops the update instead of
+/// publishing an empty clipboard.
+fn bound_received_clipboards(clipboards: &mut MultiClipboards) -> bool {
+    let mut aggregate_size = 0usize;
+    clipboards.clipboards.truncate(MAX_RECEIVED_CLIPBOARD_FORMATS);
+    clipboards.clipboards.retain_mut(|clipboard| {
+        if clipboard.compress {
+            let Ok(content) =
+                decompress_clipboard_content(&clipboard.content, MAX_RECEIVED_CLIPBOARD_BYTES)
+            else {
+                return false;
+            };
+            clipboard.content = content.into();
+            clipboard.compress = false;
+        }
+        let Some(next_size) = aggregate_size.checked_add(clipboard.content.len()) else {
+            return false;
+        };
+        if next_size > MAX_RECEIVED_CLIPBOARD_BYTES {
+            return false;
+        }
+        aggregate_size = next_size;
+        true
+    });
+    !clipboards.clipboards.is_empty()
+}
+
 pub fn take_client_received_clipboards(session_id: &SessionID) -> Option<MultiClipboards> {
     let mut queues = CLIENT_RECEIVED_CLIPBOARDS.lock().unwrap();
     let queue = queues.get_mut(session_id)?;
@@ -673,8 +740,27 @@ pub fn take_client_received_clipboards(session_id: &SessionID) -> Option<MultiCl
     clipboards
 }
 
+/// Register the private incoming-file root the frontend prepared for a session.
+///
+/// The frontend addresses sessions by UI session id while the incoming-file materializer
+/// is keyed by the native core session identity the client loop carries, so the root is
+/// stored under `core_session_id`.
 #[cfg(feature = "cliprdr-file-service")]
-pub fn set_client_clipboard_file_root(session_id: &SessionID, root: String) -> Result<(), String> {
+pub fn set_client_clipboard_file_root(core_session_id: &str, root: String) -> Result<(), String> {
+    let session_id: SessionID = core_session_id
+        .parse()
+        .map_err(|_| "clipboard session has no native identity".to_owned())?;
+    let root = validated_clipboard_file_root(&root)?;
+    CLIENT_CLIPBOARD_FILE_ROOTS
+        .lock()
+        .unwrap()
+        .insert(session_id, root);
+    Ok(())
+}
+
+/// Rejects roots that are not the dedicated session directory the frontend prepared.
+#[cfg(feature = "cliprdr-file-service")]
+fn validated_clipboard_file_root(root: &str) -> Result<PathBuf, String> {
     let root = PathBuf::from(root);
     let has_unsafe_component = root.components().any(|component| {
         matches!(
@@ -696,11 +782,7 @@ pub fn set_client_clipboard_file_root(session_id: &SessionID, root: String) -> R
     }
     std::fs::create_dir_all(&root)
         .map_err(|error| format!("failed to create clipboard file root: {error}"))?;
-    CLIENT_CLIPBOARD_FILE_ROOTS
-        .lock()
-        .unwrap()
-        .insert(*session_id, root);
-    Ok(())
+    Ok(root)
 }
 
 #[cfg(feature = "cliprdr-file-service")]
@@ -710,6 +792,74 @@ pub(crate) fn get_client_clipboard_file_root(session_id: &SessionID) -> Option<P
         .unwrap()
         .get(session_id)
         .cloned()
+}
+
+/// Register the incoming-file root the frontend prepared for the controlled side.
+///
+/// The controlled side has a single clipboard channel, so every host connection shares
+/// the root the frontend armed for `host`.
+#[cfg(feature = "cliprdr-file-service")]
+pub fn set_host_clipboard_file_root(root: String) -> Result<(), String> {
+    let root = validated_clipboard_file_root(&root)?;
+    *HOST_CLIPBOARD_FILE_ROOT.lock().unwrap() = Some(root);
+    Ok(())
+}
+
+#[cfg(feature = "cliprdr-file-service")]
+pub(crate) fn get_host_clipboard_file_root() -> Option<PathBuf> {
+    HOST_CLIPBOARD_FILE_ROOT.lock().unwrap().clone()
+}
+
+/// Queue the files a controller pasted into the controlled device's clipboard.
+#[cfg(feature = "cliprdr-file-service")]
+pub fn push_host_clipboard_files(paths: Vec<String>) {
+    if paths.is_empty() {
+        return;
+    }
+    HOST_CLIPBOARD_FILES.lock().unwrap().extend(paths);
+}
+
+/// Take the queued controlled-side clipboard files so the frontend can publish them.
+#[cfg(feature = "cliprdr-file-service")]
+pub fn take_host_clipboard_files() -> Vec<String> {
+    std::mem::take(&mut *HOST_CLIPBOARD_FILES.lock().unwrap())
+}
+
+static RECORDING_DIRECTORY: Mutex<Option<String>> = Mutex::new(None);
+
+/// Register the directory the frontend granted for recordings.
+///
+/// A HarmonyOS app cannot open a public directory on its own, so the frontend asks the user
+/// for one with the system folder picker and registers the result here.
+pub fn set_recording_directory(path: String) -> bool {
+    let path = path.trim().to_owned();
+    if path.is_empty() || !PathBuf::from(&path).is_absolute() {
+        return false;
+    }
+    *RECORDING_DIRECTORY.lock().unwrap() = Some(path);
+    true
+}
+
+/// Directory recordings go to, when the frontend granted one.
+pub fn recording_directory() -> Option<String> {
+    RECORDING_DIRECTORY.lock().unwrap().clone()
+}
+
+/// Queue files the controlled device copied so its connection can announce them.
+#[cfg(feature = "cliprdr-file-service")]
+pub fn update_host_file_clipboard(paths: Vec<String>) -> bool {
+    if paths.is_empty() || !host_clipboard_available() {
+        return false;
+    }
+    *HOST_CLIPBOARD_FILE_PENDING.lock().unwrap() = Some(paths);
+    true
+}
+
+/// Take the pending controlled-side file selection, if the device copied files since the
+/// last announcement.
+#[cfg(feature = "cliprdr-file-service")]
+pub(crate) fn take_host_file_clipboard() -> Option<Vec<String>> {
+    HOST_CLIPBOARD_FILE_PENDING.lock().unwrap().take()
 }
 
 #[cfg(feature = "cliprdr-file-service")]
@@ -842,6 +992,258 @@ pub fn update_client_file_clipboard(
     }
 }
 
+/// OHOS clipboard transfer requires a connected session whose UI is showing: there is no
+/// background clipboard service that could carry a hidden session's clipboard.
+fn is_active_clipboard_session(session: &crate::flutter::FlutterSession) -> bool {
+    session.is_default()
+        && session.is_ui_active()
+        && session.connection_round_state.lock().unwrap().is_connected()
+}
+
+/// Whether the session's peer still allows any clipboard transfer.
+///
+/// Mirrors the per-format predicates the send path checks, so the frontend is never
+/// handed a session id that can transfer nothing.
+fn is_clipboard_authorized(session: &crate::flutter::FlutterSession) -> bool {
+    #[cfg(any(feature = "unix-file-copy-paste", feature = "cliprdr-file-service"))]
+    let file_required = session.is_file_clipboard_required();
+    #[cfg(not(any(feature = "unix-file-copy-paste", feature = "cliprdr-file-service")))]
+    let file_required = false;
+    session.is_text_clipboard_required() || file_required
+}
+
+/// Resolve an id held by the frontend to the session's UI session id and its record.
+///
+/// Ids of closed or backgrounded sessions, and of sessions whose clipboard permission was
+/// revoked, resolve to `None`, so a stale id can neither send nor read clipboard data.
+fn active_clipboard_session(
+    session_id: &str,
+) -> Option<(SessionID, crate::flutter::FlutterSession)> {
+    let session_id: SessionID = session_id.parse().ok()?;
+    let session = crate::flutter::sessions::get_session_by_session_id(&session_id)?;
+    (is_active_clipboard_session(&session) && is_clipboard_authorized(&session))
+        .then_some((session_id, session))
+}
+
+/// UI session id the frontend should drive rich clipboard sync for.
+///
+/// A Flutter session records its UI session id in `core_session_id`, which is also the
+/// identity the incoming-file materializer is keyed by.
+pub fn active_clipboard_ui_session_id() -> Option<SessionID> {
+    crate::flutter::sessions::get_sessions()
+        .into_iter()
+        .find_map(|session| {
+            if !is_active_clipboard_session(&session) || !is_clipboard_authorized(&session) {
+                return None;
+            }
+            let session_id = session.core_session_id.parse::<SessionID>().ok()?;
+            // An added-but-not-started session is not addressable by the frontend.
+            crate::flutter::sessions::get_peer_id_by_session_id(
+                &session_id,
+                hbb_common::rendezvous_proto::ConnType::DEFAULT_CONN,
+            )?;
+            Some(session_id)
+        })
+}
+
+/// Register the incoming-file root prepared for a UI session.
+#[cfg(feature = "cliprdr-file-service")]
+pub fn set_ui_client_clipboard_file_root(session_id: &str, root: String) -> Result<(), String> {
+    let ui_id: SessionID = session_id.parse().map_err(|_| "invalid clipboard UI session id")?;
+    let session = crate::flutter::sessions::get_session_by_session_id(&ui_id)
+        .filter(|session| session.is_default())
+        .ok_or_else(|| "clipboard session does not exist".to_owned())?;
+    if session.core_session_id.is_empty() {
+        return Err("clipboard session has no native identity".to_owned());
+    }
+    set_client_clipboard_file_root(&session.core_session_id, root)
+}
+
+/// Forward a frontend clipboard text to the `host` channel or to one client session.
+pub fn send_ohos_clipboard_text(session_id: &str, text: String, host_active: bool) -> bool {
+    if session_id == HOST_CLIPBOARD_SESSION {
+        return host_active && update_host_text_clipboard(text);
+    }
+    let Some((session_id, session)) = active_clipboard_session(session_id) else {
+        return false;
+    };
+    session.is_text_clipboard_required() && session_send_clipboards(session_id, MultiClipboards {
+        clipboards: vec![Clipboard {
+            content: text.into_bytes().into(),
+            format: ClipboardFormat::Text.into(),
+            ..Default::default()
+        }],
+        ..Default::default()
+    })
+}
+
+/// Forward a frontend HTML clipboard, with its plain-text projection, to the
+/// `host` channel or to one client session.
+///
+/// HTML rides the same multi-clipboard message as text, so peers that only
+/// accept text still receive the projection sent alongside it.
+pub fn send_ohos_clipboard_html(
+    session_id: &str,
+    html: String,
+    text: String,
+    host_active: bool,
+) -> bool {
+    let mut entries = Vec::new();
+    if !html.is_empty() {
+        entries.push(Clipboard {
+            content: html.into_bytes().into(),
+            format: ClipboardFormat::Html.into(),
+            ..Default::default()
+        });
+    }
+    if !text.is_empty() {
+        entries.push(Clipboard {
+            content: text.into_bytes().into(),
+            format: ClipboardFormat::Text.into(),
+            ..Default::default()
+        });
+    }
+    if entries.is_empty() {
+        return false;
+    }
+    let clipboards = MultiClipboards {
+        clipboards: entries,
+        ..Default::default()
+    };
+    if session_id == HOST_CLIPBOARD_SESSION {
+        return host_active && update_host_clipboards(clipboards);
+    }
+    let Some((session_id, session)) = active_clipboard_session(session_id) else {
+        return false;
+    };
+    session.is_text_clipboard_required() && session_send_clipboards(session_id, clipboards)
+}
+
+/// Forward a frontend PNG to the `host` channel or to one client session.
+///
+/// The payload keeps the native multi-clipboard semantics: it becomes one `ImagePng`
+/// entry and the existing clipboard send path decides on compression.
+pub fn send_ohos_clipboard_image(session_id: &str, png: Vec<u8>, host_active: bool) -> bool {
+    if png.is_empty() || png.len() > MAX_RECEIVED_CLIPBOARD_BYTES {
+        return false;
+    }
+    let clipboards = MultiClipboards {
+        clipboards: vec![Clipboard {
+            content: png.into(),
+            format: ClipboardFormat::ImagePng.into(),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    if session_id == HOST_CLIPBOARD_SESSION {
+        return host_active && update_host_clipboards(clipboards);
+    }
+    let Some((session_id, session)) = active_clipboard_session(session_id) else {
+        return false;
+    };
+    session.is_text_clipboard_required() && session_send_clipboards(session_id, clipboards)
+}
+
+/// Forward a frontend file selection to one client session or to the controlled channel.
+///
+/// A `host` request stages the files for the connected controller, which receives them as a
+/// clipboard file offer; a session request announces local files to the peer this device
+/// controls.
+pub fn send_ohos_clipboard_files(session_id: &str, paths: Vec<String>) -> bool {
+    if session_id == HOST_CLIPBOARD_SESSION {
+        return update_host_file_clipboard(paths);
+    }
+    #[cfg(feature = "cliprdr-file-service")]
+    {
+        let Some((session_id, _)) = active_clipboard_session(session_id) else {
+            return false;
+        };
+        return update_client_file_clipboard(session_id, paths).is_ok();
+    }
+    #[cfg(not(feature = "cliprdr-file-service"))]
+    {
+        let _ = (session_id, paths);
+        false
+    }
+}
+
+/// Take one pending rich clipboard payload for the frontend.
+///
+/// The `host` channel carries text, html and image only; received files arrive through the
+/// session-scoped `clipboard_files` event instead.
+pub fn take_ohos_clipboard_data(
+    session_id: &str,
+    host_active: bool,
+) -> Option<crate::flutter_ffi::OhosClipboardData> {
+    let clipboards = if session_id == HOST_CLIPBOARD_SESSION {
+        if !host_active || !host_clipboard_available() {
+            return None;
+        }
+        take_host_received_clipboards()?
+    } else {
+        let (session_id, session) = active_clipboard_session(session_id)?;
+        if !session.is_text_clipboard_required() {
+            return None;
+        }
+        take_client_received_clipboards(&session_id)?
+    };
+    ohos_clipboard_data(clipboards)
+}
+
+/// Convert one received native clipboard into the payload the frontend applies.
+///
+/// PNG payloads pass through as they are; raw pixels are only handed over together with the
+/// dimensions they must match. `bgra` is never produced here: the remote protocol carries
+/// RGBA or PNG, and the platform channel only produces BGRA on its own side.
+fn ohos_clipboard_data(
+    clipboards: MultiClipboards,
+) -> Option<crate::flutter_ffi::OhosClipboardData> {
+    let mut data = crate::flutter_ffi::OhosClipboardData::default();
+    for clipboard in clipboards.clipboards {
+        match clipboard.format.enum_value() {
+            Ok(ClipboardFormat::Text) if data.text.is_none() => {
+                data.text = String::from_utf8(clipboard.content.into()).ok();
+            }
+            Ok(ClipboardFormat::Html) if data.html.is_none() => {
+                data.html = String::from_utf8(clipboard.content.into()).ok();
+            }
+            Ok(ClipboardFormat::ImagePng) if data.image.is_empty() => {
+                let image: Vec<u8> = clipboard.content.into();
+                if !image.is_empty() {
+                    data.image = image;
+                    data.image_format = CLIPBOARD_IMAGE_FORMAT_PNG.to_owned();
+                }
+            }
+            Ok(ClipboardFormat::ImageRgba) if data.image.is_empty() => {
+                if let Some((width, height)) = valid_rgba_dimensions(
+                    clipboard.width,
+                    clipboard.height,
+                    clipboard.content.len(),
+                ) {
+                    data.image = clipboard.content.into();
+                    data.image_format = CLIPBOARD_IMAGE_FORMAT_RGBA.to_owned();
+                    data.width = width;
+                    data.height = height;
+                }
+            }
+            _ => {}
+        }
+    }
+    (data.text.is_some() || data.html.is_some() || !data.image.is_empty()).then_some(data)
+}
+
+/// Raw pixels must describe exactly the pixels they carry, as the desktop clipboard path
+/// requires before handing RGBA to a platform.
+fn valid_rgba_dimensions(width: i32, height: i32, data_len: usize) -> Option<(i32, i32)> {
+    let width_usize = usize::try_from(width).ok()?;
+    let height_usize = usize::try_from(height).ok()?;
+    if width_usize == 0 || height_usize == 0 {
+        return None;
+    }
+    let expected_len = width_usize.checked_mul(height_usize)?.checked_mul(4)?;
+    (data_len == expected_len).then_some((width, height))
+}
+
 pub fn update_clipboards(client: bool, clipboards: MultiClipboards) {
     if client {
         CLIENT_CLIPBOARD.lock().unwrap().clipboards = Some(clipboards);
@@ -901,4 +1303,268 @@ pub(crate) fn finish_session(session_id: &SessionID) {
 
 pub fn register_direct_render_target_lookup(lookup: fn(&str, usize) -> Option<DirectRenderTarget>) {
     scrap::ohos::register_direct_render_target_lookup(lookup);
+}
+
+#[cfg(all(test, feature = "ohos-flutter"))]
+mod flutter_clipboard_tests {
+    use super::*;
+
+    fn image_clipboards(
+        format: ClipboardFormat,
+        width: i32,
+        height: i32,
+        content: Vec<u8>,
+    ) -> MultiClipboards {
+        MultiClipboards {
+            clipboards: vec![Clipboard {
+                content: content.into(),
+                format: format.into(),
+                width,
+                height,
+                ..Default::default()
+            }],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn remote_text_reaches_flutter_without_har_polling() {
+        let session_id = SessionID::new_v4();
+        for (text, compressed) in [("Windows → 鸿蒙\nsecond line", false), ("compressed text", true), ("", false)] {
+            let content = if compressed {
+                hbb_common::compress::compress(text.as_bytes())
+            } else {
+                text.as_bytes().to_vec()
+            };
+            receive_client_clipboards(&session_id, MultiClipboards {
+                clipboards: vec![Clipboard {
+                    content: content.into(),
+                    format: ClipboardFormat::Text.into(),
+                    compress: compressed,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            });
+            assert_eq!(FLUTTER_CLIENT_RECEIVED_TEXT.lock().unwrap().take().as_deref(), Some(text));
+            // The rich channel keeps the same payload once, newest wins.
+            assert!(take_client_received_clipboards(&session_id).is_some());
+        }
+
+        receive_client_clipboards(&session_id, MultiClipboards {
+            clipboards: vec![Clipboard {
+                content: vec![0xff].into(),
+                format: ClipboardFormat::Text.into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        });
+        assert!(FLUTTER_CLIENT_RECEIVED_TEXT.lock().unwrap().is_none());
+
+        receive_client_clipboards(&session_id, MultiClipboards {
+            clipboards: vec![Clipboard {
+                content: b"pending remote copy".to_vec().into(),
+                format: ClipboardFormat::Text.into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        });
+        set_client_clipboard_enabled(false);
+        assert!(FLUTTER_CLIENT_RECEIVED_TEXT.lock().unwrap().is_none());
+        assert!(!update_client_text_clipboard("disabled local copy".into()));
+        set_client_clipboard_enabled(true);
+        assert!(update_client_text_clipboard("local copy".into()));
+        let outgoing = get_clipboards(true).unwrap();
+        assert_eq!(outgoing.clipboards[0].content.as_ref(), b"local copy");
+        assert!(get_clipboards(true).is_none());
+    }
+
+    #[test]
+    fn rich_clipboard_maps_text_html_and_png() {
+        let data = ohos_clipboard_data(MultiClipboards {
+            clipboards: vec![
+                Clipboard {
+                    content: b"hello".to_vec().into(),
+                    format: ClipboardFormat::Text.into(),
+                    ..Default::default()
+                },
+                Clipboard {
+                    content: b"<b>hi</b>".to_vec().into(),
+                    format: ClipboardFormat::Html.into(),
+                    ..Default::default()
+                },
+                Clipboard {
+                    content: vec![0x89, 0x50].into(),
+                    format: ClipboardFormat::ImagePng.into(),
+                    ..Default::default()
+                },
+                Clipboard {
+                    content: vec![0xff, 0xfe].into(),
+                    format: ClipboardFormat::Rtf.into(),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(data.text.as_deref(), Some("hello"));
+        assert_eq!(data.html.as_deref(), Some("<b>hi</b>"));
+        assert_eq!(data.image, vec![0x89, 0x50]);
+        assert_eq!(data.image_format, CLIPBOARD_IMAGE_FORMAT_PNG);
+        assert_eq!((data.width, data.height), (0, 0));
+
+        assert!(ohos_clipboard_data(MultiClipboards {
+            clipboards: vec![Clipboard {
+                content: vec![0xff].into(),
+                format: ClipboardFormat::Text.into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .is_none());
+    }
+
+    #[test]
+    fn raw_image_requires_matching_dimensions() {
+        let rgba = vec![7u8; 2 * 3 * 4];
+        let data =
+            ohos_clipboard_data(image_clipboards(ClipboardFormat::ImageRgba, 2, 3, rgba.clone()))
+                .unwrap();
+        assert_eq!(data.image_format, CLIPBOARD_IMAGE_FORMAT_RGBA);
+        assert_eq!((data.width, data.height), (2, 3));
+        assert_eq!(data.image, rgba);
+
+        assert!(ohos_clipboard_data(image_clipboards(
+            ClipboardFormat::ImageRgba,
+            2,
+            3,
+            vec![7; 4]
+        ))
+        .is_none());
+        assert!(ohos_clipboard_data(image_clipboards(
+            ClipboardFormat::ImageRgba,
+            0,
+            3,
+            Vec::new()
+        ))
+        .is_none());
+    }
+
+    #[test]
+    fn received_rich_payload_is_scoped_and_drained_once_per_session() {
+        let session_id = SessionID::new_v4();
+        let other_session_id = SessionID::new_v4();
+        receive_client_clipboards(
+            &session_id,
+            image_clipboards(ClipboardFormat::ImagePng, 0, 0, vec![1, 2, 3]),
+        );
+        assert!(take_client_received_clipboards(&other_session_id).is_none());
+        let data = ohos_clipboard_data(take_client_received_clipboards(&session_id).unwrap())
+            .unwrap();
+        assert_eq!(data.image, vec![1, 2, 3]);
+        assert!(take_client_received_clipboards(&session_id).is_none());
+    }
+
+    #[test]
+    fn received_formats_are_bounded() {
+        let session_id = SessionID::new_v4();
+        receive_client_clipboards(
+            &session_id,
+            MultiClipboards {
+                clipboards: (0..MAX_RECEIVED_CLIPBOARD_FORMATS + 4)
+                    .map(|index| Clipboard {
+                        content: vec![index as u8].into(),
+                        format: ClipboardFormat::ImagePng.into(),
+                        ..Default::default()
+                    })
+                    .collect(),
+                ..Default::default()
+            },
+        );
+        let stored = take_client_received_clipboards(&session_id).unwrap();
+        assert_eq!(stored.clipboards.len(), MAX_RECEIVED_CLIPBOARD_FORMATS);
+
+        receive_client_clipboards(
+            &session_id,
+            MultiClipboards {
+                clipboards: vec![Clipboard {
+                    content: vec![0xff, 0x00, 0x01].into(),
+                    format: ClipboardFormat::ImagePng.into(),
+                    compress: true,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+        );
+        assert!(take_client_received_clipboards(&session_id).is_none());
+    }
+
+    #[test]
+    fn unknown_session_id_cannot_send_or_read() {
+        let stale = SessionID::new_v4().to_string();
+        assert!(!send_ohos_clipboard_text(&stale, "text".to_owned(), false));
+        assert!(!send_ohos_clipboard_image(&stale, vec![1], false));
+        assert!(!send_ohos_clipboard_files(&stale, vec!["/tmp/a".to_owned()]));
+        assert!(take_ohos_clipboard_data(&stale, false).is_none());
+        assert!(take_ohos_clipboard_data("not-a-session", false).is_none());
+        assert!(take_ohos_clipboard_data("", false).is_none());
+        assert!(active_clipboard_ui_session_id().is_none());
+    }
+
+    #[test]
+    fn host_channel_requires_native_activation() {
+        assert!(!send_ohos_clipboard_text(
+            HOST_CLIPBOARD_SESSION,
+            "blocked".to_owned(),
+            true
+        ));
+        assert!(take_ohos_clipboard_data(HOST_CLIPBOARD_SESSION, true).is_none());
+        receive_host_clipboards(image_clipboards(ClipboardFormat::ImagePng, 0, 0, vec![9]));
+        assert!(take_ohos_clipboard_data(HOST_CLIPBOARD_SESSION, true).is_none());
+
+        set_host_clipboard_available(true);
+        assert!(send_ohos_clipboard_text(
+            HOST_CLIPBOARD_SESSION,
+            "host copy".to_owned(),
+            true
+        ));
+        let forwarded = get_clipboards(false).unwrap();
+        assert_eq!(forwarded.clipboards[0].content.as_ref(), b"host copy");
+        assert!(send_ohos_clipboard_image(
+            HOST_CLIPBOARD_SESSION,
+            vec![1, 2],
+            true
+        ));
+        let forwarded = get_clipboards(false).unwrap();
+        assert_eq!(
+            forwarded.clipboards[0].format.enum_value(),
+            Ok(ClipboardFormat::ImagePng)
+        );
+        assert!(!send_ohos_clipboard_image(
+            HOST_CLIPBOARD_SESSION,
+            Vec::new(),
+            true
+        ));
+        assert!(!send_ohos_clipboard_files(
+            HOST_CLIPBOARD_SESSION,
+            vec!["/tmp/a".to_owned()]
+        ));
+        assert!(!send_ohos_clipboard_text(
+            HOST_CLIPBOARD_SESSION,
+            "inactive".to_owned(),
+            false
+        ));
+
+        receive_host_clipboards(image_clipboards(ClipboardFormat::ImagePng, 0, 0, vec![9]));
+        let data = take_ohos_clipboard_data(HOST_CLIPBOARD_SESSION, true).unwrap();
+        assert_eq!(data.image, vec![9]);
+        assert!(take_ohos_clipboard_data(HOST_CLIPBOARD_SESSION, true).is_none());
+
+        set_host_clipboard_available(false);
+        assert!(!send_ohos_clipboard_text(
+            HOST_CLIPBOARD_SESSION,
+            "blocked".to_owned(),
+            true
+        ));
+        assert!(take_ohos_clipboard_data(HOST_CLIPBOARD_SESSION, true).is_none());
+    }
 }

@@ -4,6 +4,7 @@ import { deviceInfo, pasteboard } from '@kit.BasicServicesKit';
 import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
 import { i18n } from '@kit.LocalizationKit';
 import { display, window } from '@kit.ArkUI';
+import { fileIo, fileUri, picker } from '@kit.CoreFileKit';
 import {
   AbilityAware,
   AbilityPluginBinding,
@@ -14,6 +15,11 @@ import {
   MethodChannel,
   MethodResult,
 } from '@ohos/flutter_ohos';
+import {
+  RustDeskClipboardController,
+  RustDeskRemoteClipboardPayload,
+} from './RustDeskClipboardController';
+import { RustDeskSessionLaunch, RustDeskSessionWindows } from './RustDeskSessionWindows';
 
 const METHOD_CHANNEL_NAME = 'top.frankhan.resk.flutter/platform';
 
@@ -24,9 +30,66 @@ export default class RustDeskPlatformBridge implements FlutterPlugin, MethodCall
   private continuousTaskId: number | null = null;
   private continuousTaskStarting: boolean = false;
   private readonly systemPasteboard: pasteboard.SystemPasteboard = pasteboard.getSystemPasteboard();
+  private clipboardChangeCount: number = -1;
+  private clipboardController: RustDeskClipboardController | null = null;
+  private clipboardSessionId: string = '';
+  private sessionLaunch: RustDeskSessionLaunch | null;
+  private sessionWindowId: string;
+  private sessionWindowTitle: string;
+  private launchDelivered: boolean = false;
+
+  constructor(launch: RustDeskSessionLaunch | null = null) {
+    this.sessionLaunch = launch;
+    this.sessionWindowId = launch?.windowId ?? '';
+    this.sessionWindowTitle = launch?.title ?? '';
+  }
+
+  /// Resolves true only when the session may be torn down. A pending launch is
+  /// released here because the window can be closed before Dart ever starts.
+  requestWindowClose(): Promise<boolean> {
+    if (!this.launchDelivered) {
+      this.sessionLaunch = null;
+      return Promise.resolve(true);
+    }
+    const channel = this.channel;
+    if (channel === null) return Promise.resolve(false);
+    return new Promise<boolean>((resolve: (value: boolean) => void): void => {
+      channel.invokeMethod('onWindowClose', null, {
+        success: (value: Object | null): void => {
+          resolve(value === true);
+        },
+        error: (code: string): void => {
+          console.error(`RustDesk session close request failed: ${code}`);
+          resolve(false);
+        },
+        notImplemented: (): void => {
+          resolve(false);
+        },
+      });
+    });
+  }
 
   getUniqueClassName(): string {
     return 'RustDeskPlatformBridge';
+  }
+
+  private async getDownloadDirectory(): Promise<string> {
+    const context = this.abilityContext;
+    if (context === null) {
+      throw new Error('HarmonyOS UIAbility context is unavailable');
+    }
+    const options = new picker.DocumentSaveOptions();
+    options.pickerMode = picker.DocumentPickerMode.DOWNLOAD;
+    const uris = await new picker.DocumentViewPicker(context).save(options);
+    if (uris.length === 0) {
+      throw new Error('Application Download directory was not granted');
+    }
+    const path = new fileUri.FileUri(uris[0]).path;
+    if (path.trim().length === 0) {
+      throw new Error('Application Download directory has no filesystem path');
+    }
+    fileIo.listFileSync(path);
+    return path;
   }
 
   onAttachedToEngine(binding: FlutterPluginBinding): void {
@@ -36,9 +99,11 @@ export default class RustDeskPlatformBridge implements FlutterPlugin, MethodCall
   }
 
   onDetachedFromEngine(binding: FlutterPluginBinding): void {
+    this.sessionLaunch = null;
     this.channel?.setMethodCallHandler(null);
     this.channel = null;
     this.context = null;
+    this.disposeClipboardController();
   }
 
   onAttachedToAbility(binding: AbilityPluginBinding): void {
@@ -46,6 +111,8 @@ export default class RustDeskPlatformBridge implements FlutterPlugin, MethodCall
   }
 
   onDetachedFromAbility(): void {
+    // Keep session roots across Ability recreation without retaining its context.
+    this.clipboardController?.stop();
     // An explicitly started host survives Ability recreation, so its continuous-task indicator
     // must remain active until the local Stop service action tears both down.
     this.abilityContext = null;
@@ -54,8 +121,38 @@ export default class RustDeskPlatformBridge implements FlutterPlugin, MethodCall
   onMethodCall(call: MethodCall, result: MethodResult): void {
     try {
       switch (call.method) {
+        case 'getWindowLaunchPayload':
+          if (this.sessionWindowId.length === 0) {
+            result.success(null);
+          } else {
+            this.launchDelivered = true;
+            const launch = this.sessionLaunch;
+            this.sessionLaunch = null;
+            result.success({
+              'windowId': this.sessionWindowId,
+              'payload': launch?.payload ?? '',
+            });
+          }
+          return;
+        case 'openSessionWindow':
+          const payload = (call.argument('payload') as string | null) ?? '';
+          const title = (call.argument('title') as string | null) ?? '';
+          if (this.abilityContext === null || payload.length === 0) {
+            result.error('OHOS_WINDOW_UNAVAILABLE', 'A window context and session payload are required', null);
+            return;
+          }
+          RustDeskSessionWindows.open(this.abilityContext, payload, title)
+            .then((windowId: string) => result.success(windowId))
+            .catch(() => result.error('OHOS_WINDOW_START_FAILED', 'Unable to open a session window', null));
+          return;
         case 'getFilesDir':
           result.success(this.abilityContext?.filesDir ?? this.context?.filesDir ?? '');
+          return;
+        case 'getDownloadDirectory':
+          this.getDownloadDirectory()
+            .then((path: string) => result.success(path))
+            .catch((error: Error) =>
+              result.error('OHOS_DOWNLOAD_DIRECTORY_ERROR', this.errorMessage(error), null));
           return;
         case 'getDeviceType':
           result.success(deviceInfo.deviceType);
@@ -71,14 +168,29 @@ export default class RustDeskPlatformBridge implements FlutterPlugin, MethodCall
             'height': displayInfo.height,
           });
           return;
-        case 'ensureMicrophonePermission':
-          this.ensureMicrophonePermission(result);
+        case 'hasClipboardPermission':
+          result.success(this.hasClipboardPermission());
+          return;
+        case 'requestClipboardPermission':
+          this.requestClipboardPermission(result);
           return;
         case 'getClipboardText':
-          this.getClipboardText(result);
+          this.getClipboardText(call, result);
           return;
         case 'setClipboardText':
           this.setClipboardText(call, result);
+          return;
+        case 'prepareClipboardSession':
+          this.prepareClipboardSession(call, result);
+          return;
+        case 'setClipboardSession':
+          this.setClipboardSession(call, result);
+          return;
+        case 'applyClipboardData':
+          this.applyClipboardData(call, result);
+          return;
+        case 'closeClipboardSession':
+          this.closeClipboardSession(call, result);
           return;
         case 'getAudioInputDevices':
           result.success(this.getAudioDevices(audio.DeviceFlag.INPUT_DEVICES_FLAG));
@@ -91,11 +203,37 @@ export default class RustDeskPlatformBridge implements FlutterPlugin, MethodCall
           return;
         case 'prepareWindow':
           this.withMainWindow(result, async (mainWindow: window.Window): Promise<Object | null> => {
-            const titleButtonWidth = mainWindow.getTitleButtonRect().width;
-            mainWindow.setWindowDecorVisible(false);
-            mainWindow.setWindowTitleButtonVisible(false, false, false);
-            mainWindow.setWindowTitleMoveEnabled(false);
-            return titleButtonWidth;
+            if (this.sessionWindowId.length > 0) {
+              // The session window draws its own title bar, exactly like the main window.
+              try {
+                await this.hideWindowCaption(mainWindow);
+                await mainWindow.setWindowTitle(this.sessionWindowTitle);
+                console.info(
+                  `RustDesk session window prepared, decorHeight=${mainWindow.getWindowDecorHeight()}`);
+              } catch (error) {
+                console.error(
+                  `RustDesk session window preparation failed: ${String(error)}`);
+              }
+              return null;
+            }
+            try {
+              await this.hideWindowCaption(mainWindow);
+              console.info(
+                `RustDesk main window prepared, decorHeight=${mainWindow.getWindowDecorHeight()}`);
+            } catch (error) {
+              console.error(`RustDesk main window preparation failed: ${String(error)}`);
+            }
+            return null;
+          });
+          return;
+        case 'getWindowStatus':
+          this.withMainWindow(result, async (mainWindow: window.Window): Promise<Object | null> =>
+            this.windowStatusName(mainWindow));
+          return;
+        case 'watchWindowStatus':
+          this.withMainWindow(result, async (mainWindow: window.Window): Promise<Object | null> => {
+            this.observeWindowMode(mainWindow);
+            return this.windowStatusName(mainWindow);
           });
           return;
         case 'isWindowMaximized':
@@ -131,6 +269,24 @@ export default class RustDeskPlatformBridge implements FlutterPlugin, MethodCall
             return null;
           });
           return;
+        case 'setFullscreen':
+          this.withMainWindow(result, async (mainWindow: window.Window): Promise<Object | null> => {
+            const enabled = (call.argument('enabled') as boolean | null) ?? false;
+            this.immersiveRequested = enabled;
+            if (enabled) {
+              await this.enterImmersive(mainWindow);
+            } else {
+              // Never bring the caption back: the app draws its own title bar and a re-shown
+              // caption would sit above it after leaving fullscreen.
+              await mainWindow.setWindowLayoutFullScreen(false);
+              await this.setSystemBarsVisible(mainWindow, true);
+              if (this.isMaximized(mainWindow)) {
+                await mainWindow.recover();
+              }
+            }
+            return null;
+          });
+          return;
         case 'startContinuousTask':
           this.startContinuousTask(result);
           return;
@@ -158,33 +314,63 @@ export default class RustDeskPlatformBridge implements FlutterPlugin, MethodCall
     result: MethodResult,
     action: (mainWindow: window.Window) => Promise<Object | null>,
   ): void {
-    const context = this.abilityContext ?? this.context;
+    const context = this.abilityContext;
     if (context === null) {
       result.error('OHOS_WINDOW_CONTEXT_MISSING', 'HarmonyOS application context is unavailable', null);
       return;
     }
-    window.getLastWindow(context)
-      .then((mainWindow: window.Window) => action(mainWindow))
+    Promise.resolve().then(() => action(context.windowStage.getMainWindowSync()))
       .then((value: Object | null) => result.success(value))
       .catch((error: Error) => result.error('OHOS_WINDOW_ERROR', this.errorMessage(error), null));
   }
 
-  private ensureMicrophonePermission(result: MethodResult): void {
-    if (this.abilityContext === null) {
-      result.error('OHOS_AUDIO_CONTEXT_MISSING', 'HarmonyOS UIAbility context is unavailable', null);
-      return;
+  private hasClipboardPermission(): boolean {
+    const context = this.abilityContext ?? this.context;
+    if (context === null) {
+      return false;
     }
-    const permission: Permissions = 'ohos.permission.MICROPHONE';
-    abilityAccessCtrl.createAtManager()
-      .requestPermissionsFromUser(this.abilityContext, [permission])
-      .then((data) =>
-        result.success(data.authResults.length > 0 && data.authResults[0] === 0))
-      .catch((error: Error) => result.error('OHOS_AUDIO_PERMISSION_ERROR', this.errorMessage(error), null));
+    return abilityAccessCtrl.createAtManager().checkAccessTokenSync(
+      context.applicationInfo.accessTokenId, 'ohos.permission.READ_PASTEBOARD'
+    ) === abilityAccessCtrl.GrantStatus.PERMISSION_GRANTED;
   }
 
-  private getClipboardText(result: MethodResult): void {
+  private requestClipboardPermission(result: MethodResult): void {
+    if (this.hasClipboardPermission()) {
+      result.success(true);
+      return;
+    }
+    if (this.abilityContext === null) {
+      result.error('OHOS_CLIPBOARD_CONTEXT_MISSING', 'HarmonyOS UIAbility context is unavailable', null);
+      return;
+    }
+    const permission: Permissions = 'ohos.permission.READ_PASTEBOARD';
+    abilityAccessCtrl.createAtManager()
+      .requestPermissionsFromUser(this.abilityContext, [permission])
+      .then(() => result.success(this.hasClipboardPermission()))
+      .catch((error: Error) => result.error('OHOS_CLIPBOARD_PERMISSION_ERROR', this.errorMessage(error), null));
+  }
+
+  private getClipboardText(call: MethodCall, result: MethodResult): void {
+    if (!this.hasClipboardPermission()) {
+      result.error('OHOS_CLIPBOARD_PERMISSION_DENIED', 'Clipboard access is not authorized', null);
+      return;
+    }
+    const changeCount = this.systemPasteboard.getChangeCount();
+    const force = (call.argument('force') as boolean | null) ?? false;
+    if (!force && changeCount === this.clipboardChangeCount) {
+      result.success(null);
+      return;
+    }
+    if (!this.systemPasteboard.hasDataType(pasteboard.MIMETYPE_TEXT_PLAIN)) {
+      this.clipboardChangeCount = changeCount;
+      result.success(null);
+      return;
+    }
     this.systemPasteboard.getData()
-      .then((data: pasteboard.PasteData) => result.success(data.getPrimaryText()))
+      .then((data: pasteboard.PasteData) => {
+        this.clipboardChangeCount = changeCount;
+        result.success(data.getPrimaryText());
+      })
       .catch((error: Error) => result.error('OHOS_CLIPBOARD_READ_ERROR', this.errorMessage(error), null));
   }
 
@@ -193,6 +379,188 @@ export default class RustDeskPlatformBridge implements FlutterPlugin, MethodCall
     this.systemPasteboard.setData(pasteboard.createPlainTextData(text))
       .then(() => result.success(null))
       .catch((error: Error) => result.error('OHOS_CLIPBOARD_WRITE_ERROR', this.errorMessage(error), null));
+  }
+
+  private ensureClipboardController(): RustDeskClipboardController | null {
+    const context = this.abilityContext;
+    if (context === null) {
+      return null;
+    }
+    if (this.clipboardController !== null) {
+      return this.clipboardController;
+    }
+    this.clipboardController = new RustDeskClipboardController(context, {
+      sendText: (sessionId: string, content: string): Promise<boolean> =>
+        this.sendClipboardToDart('onClipboardText', sessionId, 'text', content),
+      sendHtml: (sessionId: string, html: string, text: string): Promise<boolean> =>
+        this.sendClipboardHtmlToDart(sessionId, html, text),
+      sendImage: (sessionId: string, bytes: Uint8Array): Promise<boolean> =>
+        this.sendClipboardToDart('onClipboardImage', sessionId, 'image', bytes),
+      sendFiles: (sessionId: string, paths: Array<string>): Promise<boolean> =>
+        this.sendClipboardToDart('onClipboardFiles', sessionId, 'paths', paths),
+      log: (label: string, payload: string): void => {
+        console.info(`RustDesk clipboard ${label}: ${payload}`);
+      },
+    });
+    return this.clipboardController;
+  }
+
+  private disposeClipboardController(): void {
+    const controller = this.clipboardController;
+    this.clipboardController = null;
+    this.clipboardSessionId = '';
+    if (controller !== null) {
+      controller.reset();
+    }
+  }
+
+  private prepareClipboardSession(call: MethodCall, result: MethodResult): void {
+    const sessionId = (call.argument('sessionId') as string | null) ?? '';
+    if (sessionId.length === 0) {
+      result.error('OHOS_CLIPBOARD_SESSION_INVALID', 'A clipboard session id is required', null);
+      return;
+    }
+    const controller = this.ensureClipboardController();
+    if (controller === null) {
+      result.error('OHOS_CLIPBOARD_CONTEXT_MISSING', 'HarmonyOS UIAbility context is unavailable', null);
+      return;
+    }
+    // Preparing a root only publishes the staging directory; watching starts in setClipboardSession.
+    result.success(controller.incomingFileRoot(sessionId));
+  }
+
+  private setClipboardSession(call: MethodCall, result: MethodResult): void {
+    const sessionId = (call.argument('sessionId') as string | null) ?? '';
+    if (sessionId.length === 0) {
+      this.clipboardSessionId = '';
+      const controller = this.clipboardController;
+      if (controller === null) {
+        result.success(false);
+        return;
+      }
+      controller.stopAndDrainRemoteWrite()
+        .then(() => result.success(false))
+        .catch((error: Error) =>
+          result.error('OHOS_CLIPBOARD_SESSION_ERROR', this.errorMessage(error), null));
+      return;
+    }
+    const controller = this.ensureClipboardController();
+    if (controller === null) {
+      result.success(false);
+      return;
+    }
+    this.clipboardSessionId = sessionId;
+    controller.start(sessionId);
+    result.success(true);
+  }
+
+  private applyClipboardData(call: MethodCall, result: MethodResult): void {
+    const sessionId = (call.argument('sessionId') as string | null) ?? '';
+    if (sessionId.length === 0) {
+      result.error('OHOS_CLIPBOARD_SESSION_INVALID', 'A clipboard session id is required', null);
+      return;
+    }
+    const controller = this.ensureClipboardController();
+    if (controller === null) {
+      result.error('OHOS_CLIPBOARD_CONTEXT_MISSING', 'HarmonyOS UIAbility context is unavailable', null);
+      return;
+    }
+    const payload: RustDeskRemoteClipboardPayload = {};
+    const text = (call.argument('text') as string | null) ?? null;
+    if (text !== null) {
+      payload.text = text;
+    }
+    const html = (call.argument('html') as string | null) ?? null;
+    if (html !== null) {
+      payload.html = html;
+    }
+    const files = (call.argument('files') as Array<string> | null) ?? null;
+    if (files !== null && files.length > 0) {
+      payload.files = files;
+    }
+    const imageBytes = (call.argument('image') as Uint8Array | null) ?? null;
+    if (imageBytes !== null && imageBytes.length > 0) {
+      payload.image = {
+        format: (call.argument('imageFormat') as string | null) ?? 'png',
+        width: (call.argument('width') as number | null) ?? 0,
+        height: (call.argument('height') as number | null) ?? 0,
+        bytes: imageBytes,
+      };
+    }
+    controller.applyRemoteClipboard(sessionId, payload)
+      .then(() => result.success(null))
+      .catch((error: Error) => result.error('OHOS_CLIPBOARD_WRITE_ERROR', this.errorMessage(error), null));
+  }
+
+  private closeClipboardSession(call: MethodCall, result: MethodResult): void {
+    const sessionId = (call.argument('sessionId') as string | null) ?? '';
+    const controller = this.clipboardController;
+    if (controller === null || sessionId.length === 0) {
+      result.success(null);
+      return;
+    }
+    this.closeClipboardSessionInternal(sessionId, controller)
+      .then(() => result.success(null))
+      .catch((error: Error) =>
+        result.error('OHOS_CLIPBOARD_SESSION_ERROR', this.errorMessage(error), null));
+  }
+
+  private async closeClipboardSessionInternal(
+    sessionId: string,
+    controller: RustDeskClipboardController,
+  ): Promise<void> {
+    if (sessionId === this.clipboardSessionId) {
+      this.clipboardSessionId = '';
+      await controller.stopAndDrainRemoteWrite();
+    }
+    await controller.cleanupIncomingRootForClosedSession(sessionId);
+  }
+
+  private sendClipboardToDart(
+    method: string,
+    sessionId: string,
+    argumentName: string,
+    argumentValue: string | Uint8Array | Array<string>,
+  ): Promise<boolean> {
+    if (sessionId !== this.clipboardSessionId) {
+      return Promise.resolve(false);
+    }
+    const args = new Map<string, string | Uint8Array | Array<string>>();
+    args.set('sessionId', sessionId);
+    args.set(argumentName, argumentValue);
+    return this.invokeDartBoolean(method, args);
+  }
+
+  private sendClipboardHtmlToDart(sessionId: string, html: string, text: string): Promise<boolean> {
+    if (sessionId !== this.clipboardSessionId) {
+      return Promise.resolve(false);
+    }
+    const args = new Map<string, string | Uint8Array | Array<string>>();
+    args.set('sessionId', sessionId);
+    args.set('html', html);
+    args.set('text', text);
+    return this.invokeDartBoolean('onClipboardHtml', args);
+  }
+
+  private invokeDartBoolean(method: string, args: Map<string, string | Uint8Array | Array<string>>): Promise<boolean> {
+    const channel = this.channel;
+    if (channel === null) {
+      return Promise.resolve(false);
+    }
+    return new Promise<boolean>((resolve: (value: boolean) => void): void => {
+      channel.invokeMethod(method, args, {
+        success: (value: Object | null): void => {
+          resolve(value === true);
+        },
+        error: (code: string, message: string): void => {
+          console.error(`RustDesk clipboard ${method} was rejected: ${code} ${message}`);
+          resolve(false);
+        },
+        notImplemented: (): void => {
+          resolve(false);
+        },
+      });
+    });
   }
 
   private startContinuousTask(result: MethodResult): void {
@@ -253,10 +621,103 @@ export default class RustDeskPlatformBridge implements FlutterPlugin, MethodCall
     await backgroundTaskManager.stopBackgroundRunning(context, taskId);
   }
 
+  /// Asks the system to drop the window caption so the app can draw its own title bar.
+  ///
+  /// Measured on a 2in1 emulator and on a tablet: the caption stays at 37px no matter what
+  /// this calls, so the app keeps the platform caption and must not maximize the window to
+  /// try to get rid of it (that would also leave the free-form layout).
+  private async hideWindowCaption(mainWindow: window.Window): Promise<void> {
+    await mainWindow.setWindowDecorVisible(false);
+    mainWindow.setWindowTitleButtonVisible(false, false, false);
+    mainWindow.setWindowTitleMoveEnabled(false);
+  }
+
   private isMaximized(mainWindow: window.Window): boolean {
     const status = mainWindow.getWindowStatus();
     return status === window.WindowStatusType.MAXIMIZE || status === window.WindowStatusType.FULL_SCREEN;
   }
+
+  private async setSystemBarsVisible(mainWindow: window.Window, visible: boolean): Promise<void> {
+    try {
+      await mainWindow.setSpecificSystemBarEnabled('status', visible);
+      await mainWindow.setSpecificSystemBarEnabled('navigationIndicator', visible);
+    } catch (error) {
+      // Freeform and auxiliary windows cannot hide the system bars, so the session keeps
+      // whatever the desktop shell shows.
+      console.error(`RustDesk system bar toggle failed: ${String(error)}`);
+    }
+  }
+
+  /// Fullscreen on a 2in1 also has to hide the desktop dock: only the immersive
+  /// presentation does that, and the shell only keeps it while the window is maximized.
+  private async enterImmersive(mainWindow: window.Window): Promise<void> {
+    await mainWindow.maximize(window.MaximizePresentation.ENTER_IMMERSIVE);
+    await mainWindow.setWindowLayoutFullScreen(true);
+    mainWindow.setWindowDecorVisible(false);
+    await this.setSystemBarsVisible(mainWindow, false);
+    this.observeWindowStatus(mainWindow);
+  }
+
+  private observeWindowStatus(mainWindow: window.Window): void {
+    if (this.immersiveObserved) {
+      return;
+    }
+    this.immersiveObserved = true;
+    try {
+      mainWindow.on('windowStatusChange', (status: window.WindowStatusType) => {
+        if (status === window.WindowStatusType.MAXIMIZE && this.immersiveRequested) {
+          mainWindow.maximize(window.MaximizePresentation.ENTER_IMMERSIVE)
+            .catch((error: Error) => console.error(
+              `RustDesk immersive re-entry failed: ${this.errorMessage(error)}`));
+        }
+      });
+    } catch (error) {
+      console.error(`RustDesk window status listener failed: ${String(error)}`);
+    }
+  }
+
+  private immersiveRequested: boolean = false;
+  private immersiveObserved: boolean = false;
+
+  private windowStatusName(mainWindow: window.Window): string {
+    const status = mainWindow.getWindowStatus();
+    if (status === window.WindowStatusType.FLOATING) {
+      return 'floating';
+    }
+    if (status === window.WindowStatusType.SPLIT_SCREEN) {
+      return 'split';
+    }
+    if (status === window.WindowStatusType.FULL_SCREEN) {
+      return 'fullscreen';
+    }
+    if (status === window.WindowStatusType.MAXIMIZE) {
+      return 'maximize';
+    }
+    return 'recover';
+  }
+
+  /// Report window mode changes so the frontend can switch between the mobile and the
+  /// desktop layout, and keep the 2in1 minimum size in place.
+  private observeWindowMode(mainWindow: window.Window): void {
+    if (this.windowModeObserved) {
+      return;
+    }
+    this.windowModeObserved = true;
+    try {
+      mainWindow.on('windowStatusChange', (status: window.WindowStatusType) => {
+        this.channel?.invokeMethod('onWindowStatus', {
+          'status': this.windowStatusName(mainWindow),
+        });
+        // The caption APIs settle with the window state, so measure after the change.
+        console.info(
+          `RustDesk window status changed, decorHeight=${mainWindow.getWindowDecorHeight()}`);
+      });
+    } catch (error) {
+      console.error(`RustDesk window mode listener failed: ${String(error)}`);
+    }
+  }
+
+  private windowModeObserved: boolean = false;
 
   private getAudioDevices(flag: audio.DeviceFlag): Array<string> {
     const routingManager = audio.getAudioManager().getRoutingManager();

@@ -105,6 +105,12 @@ class StateGlobal {
     refreshResizeEdgeSize();
     print("fullscreen: $fullscreen, resizeEdgeSize: ${_resizeEdgeSize.value}");
     _windowBorderWidth.value = fullscreen.isTrue ? 0 : kWindowBorderWidth;
+    if (procWnd && isOhos) {
+      // HarmonyOS registers no window_manager plugin; the platform channel owns native
+      // fullscreen for both the main window and a session window.
+      platformFFI.setFullscreen(_fullscreen.isTrue);
+      return;
+    }
     if (procWnd) {
       final wc = WindowController.fromWindowId(windowId);
       wc.setFullscreen(_fullscreen.isTrue).then((_) {

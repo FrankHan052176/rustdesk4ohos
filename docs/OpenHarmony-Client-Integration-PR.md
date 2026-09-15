@@ -54,7 +54,10 @@ Authoritative RustDesk Core
 
 ## Compatibility and limitations
 
-- OHOS file transfer remains disabled.
+- OHOS hosts accept file transfer and IP tunnelling logins; terminal and
+  view-camera hosting stay refused (`src/server/connection.rs`).
+- Client-side session recording on OHOS only supports the VP8/VP9/AV1 path; an
+  H.264/H.265 stream is not recordable there (`libs/scrap/src/common/record.rs`).
 - HAR hosting remains fail-closed/view-only.
 - The local Flutter debug profile is for device installation, not AppGallery
   publication.

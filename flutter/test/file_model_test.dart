@@ -12,6 +12,8 @@ class _FakeFFI implements FFI {
   @override
   String id = 'test-peer';
   @override
+  bool closed = false;
+  @override
   UuidValue get sessionId => _sessionId;
   @override
   late final FfiModel ffiModel = FfiModel(WeakReference(this));
@@ -49,6 +51,34 @@ class _SentRead {
 }
 
 void main() {
+  test('closing a controller discards its pending directory result', () async {
+    final fileFetcher = FileFetcher(
+      () => _sessionId,
+      readRemoteDirectory: (_, __, ___) async {},
+    );
+    final controller = _createController(fileFetcher);
+    final request = controller.openDirectory('/pending');
+    await Future<void>.delayed(Duration.zero);
+
+    await controller.close();
+    fileFetcher.tryCompleteTask(_directoryJson('/pending'), 'false');
+
+    await request;
+    expect(controller.directory.value.path, isEmpty);
+  });
+
+  test('a closed session does not start directory initialization', () async {
+    final ffi = _FakeFFI()..closed = true;
+    final model = FileModel(WeakReference(ffi));
+
+    await model.onReady();
+    await model.localController.onReady();
+    await model.remoteController.onReady();
+
+    expect(model.localController.directory.value.path, isEmpty);
+    expect(model.remoteController.directory.value.path, isEmpty);
+  });
+
   test('a fast remote response is matched after registration', () async {
     late final FileFetcher fileFetcher;
     fileFetcher = FileFetcher(

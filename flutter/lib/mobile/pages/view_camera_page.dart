@@ -20,6 +20,7 @@ import '../../models/input_model.dart';
 import '../../models/model.dart';
 import '../../models/platform_model.dart';
 import '../../utils/image.dart';
+import '../../utils/ohos_session_window.dart';
 
 final initText = '1' * 1024;
 
@@ -119,10 +120,15 @@ class _ViewCameraPageState extends State<ViewCameraPage>
   }
 
   @override
-  Future<void> dispose() async {
-    WidgetsBinding.instance.removeObserver(this);
-    // https://github.com/flutter/flutter/issues/64935
+  void dispose() {
     super.dispose();
+    final closing = _disposeSession();
+    OhosSessionWindow.trackDisposal(closing);
+    unawaited(closing);
+  }
+
+  Future<void> _disposeSession() async {
+    WidgetsBinding.instance.removeObserver(this);
     gFFI.dialogManager.hideMobileActionsOverlay(store: false);
     gFFI.inputModel.listenToMouse(false);
     gFFI.imageModel.disposeImage();

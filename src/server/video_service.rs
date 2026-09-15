@@ -1004,6 +1004,7 @@ fn get_encoder_config(
                 c.height as _,
                 quality,
                 keyframe_interval,
+                VIDEO_QOS.lock().unwrap().fps(),
             ) {
                 return EncoderCfg::OHOS(config);
             }

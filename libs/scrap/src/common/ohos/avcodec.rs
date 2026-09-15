@@ -49,6 +49,7 @@ const AVCODEC_BUFFER_FLAGS_INCOMPLETE_FRAME: u32 = 1 << 2;
 const AVCODEC_BUFFER_FLAGS_CODEC_DATA: u32 = 1 << 3;
 const HARDWARE_CODEC_CATEGORY: i32 = 0;
 const ENCODER_FPS: i32 = 30;
+const MAX_ENCODER_FPS: u32 = 120;
 const ENCODER_BUFFER_TIMEOUT_US: i64 = 100_000;
 const ENCODER_OUTPUT_TIMEOUT: Duration = Duration::from_millis(300);
 const ENCODER_INPUT_BACKPRESSURE: &str = "OHOS_ENCODER_INPUT_BACKPRESSURE";
@@ -1249,6 +1250,52 @@ impl GoogleImage for OhosImage {
     }
 }
 
+impl OhosImage {
+    /// Repack the decoded I420 planes into the layout a software encoder reads.
+    ///
+    /// The decoder hands back planes with their own strides and offsets, while the libvpx
+    /// encoders read packed rows at `EncodeYuvFormat`'s strides and plane offsets.
+    pub(crate) fn write_i420(&self, dst: &mut Vec<u8>, fmt: &EncodeYuvFormat) {
+        let chroma_rows = self.height.div_ceil(2);
+        let total = fmt.v + fmt.stride[2] * chroma_rows;
+        dst.clear();
+        dst.resize(total, 0);
+        let planes = [
+            (self.offsets[0], self.stride[0], fmt.stride[0], fmt.w, fmt.h),
+            (
+                self.offsets[1],
+                self.stride[1],
+                fmt.stride[1],
+                fmt.w.div_ceil(2),
+                chroma_rows,
+            ),
+            (
+                self.offsets[2],
+                self.stride[2],
+                fmt.stride[2],
+                fmt.w.div_ceil(2),
+                chroma_rows,
+            ),
+        ];
+        let dst_offsets = [0usize, fmt.u, fmt.v];
+        for (index, &(src_offset, src_stride, dst_stride, cols, rows)) in
+            planes.iter().enumerate()
+        {
+            let src_stride = src_stride.max(0) as usize;
+            let cols = cols.min(self.width);
+            for row in 0..rows {
+                let src_start = src_offset + row * src_stride;
+                let src_end = src_start + cols;
+                let dst_start = dst_offsets[index] + row * dst_stride;
+                if src_end > self.raw.len() || dst_start + cols > dst.len() {
+                    break;
+                }
+                dst[dst_start..dst_start + cols].copy_from_slice(&self.raw[src_start..src_end]);
+            }
+        }
+    }
+}
+
 fn ensure_ok(code: i32, label: &str) -> ResultType<()> {
     if code == AV_ERR_OK {
         Ok(())
@@ -1359,6 +1406,7 @@ pub struct OhosVideoEncoderConfig {
     pub height: u32,
     pub quality: f32,
     pub keyframe_interval: Option<usize>,
+    pub fps: u32,
 }
 
 struct EncoderOutput {
@@ -1455,6 +1503,17 @@ impl OhosVideoEncoder {
         if format.is_null() {
             bail!("failed to create OHOS encoder format")
         }
+
+        // VIDEO_QOS hands the engine a target rate; the OHOS encoder used to be
+        // pinned to 30 regardless of it. Keep 30 only when no hint arrived.
+        let encoder_fps = {
+            let requested = self.config.fps;
+            if requested == 0 {
+                ENCODER_FPS
+            } else {
+                requested.min(MAX_ENCODER_FPS) as i32
+            }
+        };
         let configure_result = (|| -> ResultType<()> {
             set_format_int(format, unsafe { OH_MD_KEY_WIDTH }, width, "width")?;
             set_format_int(format, unsafe { OH_MD_KEY_HEIGHT }, height, "height")?;
@@ -1467,7 +1526,7 @@ impl OhosVideoEncoder {
             set_format_double(
                 format,
                 unsafe { OH_MD_KEY_FRAME_RATE },
-                ENCODER_FPS as f64,
+                encoder_fps as f64,
                 "frame rate",
             )?;
             set_format_long(
@@ -1489,7 +1548,7 @@ impl OhosVideoEncoder {
             if let Some(frames) = self.config.keyframe_interval {
                 let interval_ms = frames
                     .saturating_mul(1000)
-                    .checked_div(ENCODER_FPS as usize)
+                    .checked_div(encoder_fps as usize)
                     .unwrap_or(1000)
                     .min(i32::MAX as usize) as i32;
                 set_format_int(

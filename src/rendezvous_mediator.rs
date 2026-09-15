@@ -141,7 +141,7 @@ impl RendezvousMediator {
         #[cfg(not(any(target_os = "android", target_os = "ios", target_env = "ohos")))]
         let start_lan_listening = crate::platform::is_installed();
         #[cfg(target_env = "ohos")]
-        let start_lan_listening = false;
+        let start_lan_listening = true;
         if start_lan_listening {
             std::thread::spawn(move || {
                 allow_err!(super::lan::start_listening());

@@ -15,6 +15,7 @@ pub fn encoder_config(
     height: u32,
     quality: f32,
     keyframe_interval: Option<usize>,
+    fps: u32,
 ) -> Option<OhosVideoEncoderConfig> {
     matches!(format, CodecFormat::H264 | CodecFormat::H265).then_some(OhosVideoEncoderConfig {
         format,
@@ -22,6 +23,7 @@ pub fn encoder_config(
         height,
         quality,
         keyframe_interval,
+        fps,
     })
 }
 

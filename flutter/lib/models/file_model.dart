@@ -66,6 +66,7 @@ class FileModel {
   late final GetDialogManager getDialogManager;
   SessionID get sessionId => getSessionID();
   late final FileDialogEventLoop evtLoop;
+  int _readyGeneration = 0;
 
   FileModel(this.parent) {
     getSessionID = () => parent.target!.sessionId;
@@ -90,17 +91,22 @@ class FileModel {
   }
 
   Future<void> onReady() async {
+    if (parent.target?.closed != false) return;
+    final generation = ++_readyGeneration;
     fileFetcher.beginRemoteSession();
     await evtLoop.onReady();
+    if (generation != _readyGeneration) return;
     if (!isWeb) await localController.onReady();
+    if (generation != _readyGeneration) return;
     await remoteController.onReady();
   }
 
   Future<void> close() async {
-    await evtLoop.close();
+    _readyGeneration++;
+    fileFetcher.beginRemoteSession();
     parent.target?.dialogManager.dismissAll();
-    await localController.close();
-    await remoteController.close();
+    await Future.wait(
+        [evtLoop.close(), localController.close(), remoteController.close()]);
   }
 
   Future<void> refreshAll() async {
@@ -363,6 +369,7 @@ class FileController {
   var sortAscending = true;
   // Incremented for each navigation; only the latest generation applies results.
   int _directoryRequestGeneration = 0;
+  int _readyGeneration = 0;
   final JobController jobController;
   final WeakReference<FFI> rootState;
 
@@ -401,28 +408,55 @@ class FileController {
   }
 
   Future<void> onReady() async {
+    if (rootState.target?.closed != false) return;
+    final generation = ++_readyGeneration;
+    String? obsoleteLocalHome;
     if (isLocal) {
-      options.value.home = await bind.mainGetHomeDir();
+      final nativeHome = await bind.mainGetHomeDir();
+      if (generation != _readyGeneration) return;
+      var home = nativeHome;
+      if (isOhos) {
+        try {
+          home = await platformFFI.getOhosDownloadDirectory();
+        } catch (error) {
+          // The picker needs a live UIAbility context; keeping the native home
+          // stops a failed pick from aborting onReady and emptying both panels.
+          debugPrint(
+              'HarmonyOS download directory unavailable (${error.runtimeType})');
+        }
+      }
+      if (generation != _readyGeneration) return;
+      options.value.home = home;
+      if (isOhos && nativeHome != home) {
+        obsoleteLocalHome = nativeHome;
+      }
     }
-    options.value.showHidden = (await bind.sessionGetPeerOption(
+    final showHidden = (await bind.sessionGetPeerOption(
             sessionId: sessionId,
             name: isLocal ? "local_show_hidden" : "remote_show_hidden"))
         .isNotEmpty;
+    if (generation != _readyGeneration) return;
+    options.value.showHidden = showHidden;
     options.value.isWindows = isLocal
         ? isWindows
         : rootState.target?.ffiModel.pi.platform == kPeerPlatformWindows;
 
     await Future.delayed(Duration(milliseconds: 100));
+    if (generation != _readyGeneration) return;
 
     final savedDir = (await bind.sessionGetPeerOption(
         sessionId: sessionId, name: isLocal ? "local_dir" : "remote_dir"));
+    if (generation != _readyGeneration) return;
     Future<bool> tryOpenReadyDirs() async {
       final dirs = <String>{
-        if (directory.value.path.isNotEmpty) directory.value.path,
-        if (savedDir.isNotEmpty) savedDir,
+        if (directory.value.path.isNotEmpty &&
+            directory.value.path != obsoleteLocalHome)
+          directory.value.path,
+        if (savedDir.isNotEmpty && savedDir != obsoleteLocalHome) savedDir,
         options.value.home,
       };
       for (final dir in dirs) {
+        if (generation != _readyGeneration) return false;
         if (await _openDirectoryPath(dir, isBack: true)) {
           return true;
         }
@@ -434,7 +468,7 @@ class FileController {
 
     await Future.delayed(Duration(seconds: 1));
 
-    if (!opened) {
+    if (!opened && generation == _readyGeneration) {
       // The peer may become ready during the reconnect delay, so retry the
       // same candidates instead of only retrying the default home directory.
       await tryOpenReadyDirs();
@@ -442,17 +476,23 @@ class FileController {
   }
 
   Future<void> close() async {
-    // save config
-    Map<String, String> msgMap = {};
-    msgMap[isLocal ? "local_dir" : "remote_dir"] = directory.value.path;
-    msgMap[isLocal ? "local_show_hidden" : "remote_show_hidden"] =
-        options.value.showHidden ? "Y" : "";
-    for (final msg in msgMap.entries) {
-      await bind.sessionPeerOption(
-          sessionId: sessionId, name: msg.key, value: msg.value);
+    _readyGeneration++;
+    _directoryRequestGeneration++;
+    final saves = <Future<void>>[];
+    if (directory.value.path.isNotEmpty) {
+      final msgMap = {
+        isLocal ? "local_dir" : "remote_dir": directory.value.path,
+        isLocal ? "local_show_hidden" : "remote_show_hidden":
+            options.value.showHidden ? "Y" : "",
+      };
+      for (final msg in msgMap.entries) {
+        saves.add(bind.sessionPeerOption(
+            sessionId: sessionId, name: msg.key, value: msg.value));
+      }
     }
     directory.value.clear();
     options.value.clear();
+    await Future.wait(saves);
   }
 
   void toggleShowHidden({bool? showHidden}) {
@@ -485,6 +525,7 @@ class FileController {
   }
 
   Future<bool> _openDirectoryPath(String path, {bool isBack = false}) async {
+    if (rootState.target?.closed == true) return false;
     if (!isBack) {
       pushHistory();
     }

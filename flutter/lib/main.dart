@@ -18,6 +18,7 @@ import 'package:flutter_hbb/desktop/screen/desktop_terminal_screen.dart';
 import 'package:flutter_hbb/desktop/widgets/refresh_wrapper.dart';
 import 'package:flutter_hbb/models/state_model.dart';
 import 'package:flutter_hbb/utils/multi_window_manager.dart';
+import 'package:flutter_hbb/utils/ohos_session_window.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:get/get.dart';
 import 'package:provider/provider.dart';
@@ -183,6 +184,81 @@ void runMobileApp() async {
   gFFI.userModel.refreshCurrentUser();
   runApp(App());
   await initUniLinks();
+}
+
+@pragma('vm:entry-point')
+Future<void> ohosSessionMain(List<String> args) async {
+  WidgetsFlutterBinding.ensureInitialized();
+  kBootArgs = [];
+  try {
+    final launch = await platformFFI.getWindowLaunchPayload();
+    if (launch == null) throw StateError('Session launch is unavailable');
+    OhosSessionWindow.windowId = launch['windowId'] as String;
+    final payload = jsonDecode(launch['payload'] as String) as Map<String, dynamic>;
+    OhosSessionWindow.connectionToken = payload['connToken'] as String?;
+    await initEnv('ohos-session-${OhosSessionWindow.windowId}');
+    draggablePositions.load();
+    runApp(App(home: _OhosSessionLaunchPage(payload: payload)));
+  } catch (error) {
+    debugPrint('OHOS session startup failed (${error.runtimeType})');
+    runApp(MaterialApp(home: Scaffold(body: Center(child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Text('Unable to open session'),
+        TextButton(onPressed: () => platformFFI.closeWindow(),
+            child: const Text('Close')),
+      ],
+    )))));
+  } finally {
+    OhosSessionWindow.ready.complete();
+  }
+}
+
+class _OhosSessionLaunchPage extends StatefulWidget {
+  const _OhosSessionLaunchPage({required this.payload});
+  final Map<String, dynamic> payload;
+
+  @override
+  State<_OhosSessionLaunchPage> createState() => _OhosSessionLaunchPageState();
+}
+
+class _OhosSessionLaunchPageState extends State<_OhosSessionLaunchPage> {
+  bool _failed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted || OhosSessionWindow.closing.value) return;
+      final payload = widget.payload;
+      try {
+        await platformFFI.prepareSessionWindow();
+        if (!mounted || OhosSessionWindow.closing.value) return;
+        await connect(context, payload['id'] as String,
+            isFileTransfer: payload['isFileTransfer'] == true,
+            isViewCamera: payload['isViewCamera'] == true,
+            isTerminal: payload['isTerminal'] == true,
+            forceRelay: payload['forceRelay'] == true,
+            password: payload['password'] as String?,
+            connToken: payload['connToken'] as String?,
+            isSharedPassword: payload['isSharedPassword'] as bool?,
+            openInCurrentWindow: true);
+      } catch (error) {
+        debugPrint('OHOS session window failed (${error.runtimeType})');
+        if (mounted) setState(() => _failed = true);
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(body: Center(child: Column(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Text(translate(_failed ? 'Connection Error' : 'Connecting...')),
+      TextButton(onPressed: () => platformFFI.closeWindow(),
+          child: Text(translate('Close'))),
+    ],
+  )));
 }
 
 void runMultiWindow(
@@ -419,6 +495,9 @@ WindowOptions getHiddenTitleBarWindowOptions(
 }
 
 class App extends StatefulWidget {
+  const App({super.key, this.home});
+  final Widget? home;
+
   @override
   State<App> createState() => _AppState();
 }
@@ -497,15 +576,21 @@ class _AppState extends State<App> with WidgetsBindingObserver {
           debugShowCheckedModeBanner: false,
           title: isWeb
               ? '${bind.mainGetAppNameSync()} Web Client V2 (Preview)'
-              : bind.mainGetAppNameSync(),
+              : isOhos
+                  ? 'RustDesk Unofficial'
+                  : bind.mainGetAppNameSync(),
           theme: MyTheme.lightTheme,
           darkTheme: MyTheme.darkTheme,
           themeMode: MyTheme.currentThemeMode(),
-          home: isDesktopUi
-              ? const DesktopTabPage()
-              : isWeb
-                  ? WebHomePage()
-                  : HomePage(),
+          home: widget.home ??
+              ValueListenableBuilder<bool>(
+                valueListenable: ohosFreeformWindow,
+                builder: (_, __, ___) => isDesktopUi
+                    ? const DesktopTabPage()
+                    : isWeb
+                        ? WebHomePage()
+                        : HomePage(),
+              ),
           localizationsDelegates: const [
             GlobalMaterialLocalizations.delegate,
             GlobalWidgetsLocalizations.delegate,
@@ -532,6 +617,15 @@ class _AppState extends State<App> with WidgetsBindingObserver {
                       isWebDesktop) {
                     child = keyListenerBuilder(context, child);
                   }
+                  if (OhosSessionWindow.isSession) {
+                    child = ValueListenableBuilder<bool>(
+                      valueListenable: OhosSessionWindow.closing,
+                      child: child,
+                      builder: (_, closing, content) => closing
+                          ? const SizedBox.shrink()
+                          : content ?? const SizedBox.shrink(),
+                    );
+                  }
                   if (isLinux) {
                     return buildVirtualWindowFrame(context, child);
                   } else {
@@ -554,7 +648,7 @@ Widget _keepScaleBuilder(BuildContext context, Widget? child) {
 }
 
 _registerEventHandler() {
-  if (isDesktop && desktopType != DesktopType.main) {
+  if ((isDesktop && desktopType != DesktopType.main) || OhosSessionWindow.isSession) {
     platformFFI.registerEventHandler('theme', 'theme', (evt) async {
       String? dark = evt['dark'];
       if (dark != null) {
@@ -562,7 +656,11 @@ _registerEventHandler() {
       }
     });
     platformFFI.registerEventHandler('language', 'language', (_) async {
-      reloadAllWindows();
+      if (isOhos) {
+        reloadCurrentWindow();
+      } else {
+        reloadAllWindows();
+      }
     });
   }
   if (isAndroid) {

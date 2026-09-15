@@ -707,8 +707,7 @@ class _DesktopTabState extends State<DesktopTab>
           showClose: showClose,
           onClose: onWindowCloseButton,
           labelGetter: labelGetter,
-        ).paddingOnly(
-            left: 10, right: isOhos ? ohosTitleButtonReservedWidth : 0)
+        ).paddingOnly(left: 10)
       ],
     );
   }

@@ -624,3 +624,60 @@ class _RelativeMouseModeHint extends StatelessWidget {
     });
   }
 }
+
+/// Session window shell for a HarmonyOS 2in1 device.
+///
+/// The window is frameless, so it draws the same tab bar the desktop platforms draw: the
+/// peer name, the connection state and the window controls all come from [DesktopTab],
+/// which already routes its window operations through the HarmonyOS platform channel.
+class OhosSessionTabPage extends StatefulWidget {
+  const OhosSessionTabPage({Key? key, required this.id, required this.page})
+      : super(key: key);
+
+  final String id;
+  final Widget page;
+
+  @override
+  State<OhosSessionTabPage> createState() => _OhosSessionTabPageState();
+}
+
+class _OhosSessionTabPageState extends State<OhosSessionTabPage> {
+  late final DesktopTabController _tabController;
+
+  @override
+  void initState() {
+    super.initState();
+    // A plain controller, not Get.put: when the session page shares a window with the home
+    // page (a free-form tablet window) that page already owns one.
+    _tabController = DesktopTabController(tabType: DesktopTabType.remoteScreen);
+    // GetX state written during the first build trips Flutter's "setState() or
+    // markNeedsBuild() called during build" assertion, so write it after the frame.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      ConnectionTypeState.init(widget.id);
+      _tabController.add(TabInfo(
+        key: widget.id,
+        label: widget.id,
+        selectedIcon: Icons.desktop_windows_sharp,
+        unselectedIcon: Icons.desktop_windows_outlined,
+        page: widget.page,
+      ));
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Theme.of(context).colorScheme.background,
+      body: DesktopTab(
+        controller: _tabController,
+        selectedBorderColor: MyTheme.accent,
+        labelGetter: DesktopTab.tablabelGetter,
+        onWindowCloseButton: () async {
+          await platformFFI.closeWindow();
+          return true;
+        },
+      ),
+    );
+  }
+}

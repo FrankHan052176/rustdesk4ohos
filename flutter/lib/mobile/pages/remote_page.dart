@@ -22,6 +22,7 @@ import '../../models/input_model.dart';
 import '../../models/model.dart';
 import '../../models/platform_model.dart';
 import '../../utils/image.dart';
+import '../../utils/ohos_session_window.dart';
 import '../widgets/dialog.dart';
 import '../widgets/custom_scale_widget.dart';
 
@@ -141,7 +142,14 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   }
 
   @override
-  Future<void> dispose() async {
+  void dispose() {
+    super.dispose();
+    final closing = _disposeSession();
+    OhosSessionWindow.trackDisposal(closing);
+    unawaited(closing);
+  }
+
+  Future<void> _disposeSession() async {
     WidgetsBinding.instance.removeObserver(this);
     // Close the session up-front. `gFFI.close()` below only calls `sessionClose`
     // after several awaits (canvas save, image update, the `enable_soft_keyboard`
@@ -151,8 +159,6 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     // "Connecting...". Dispatching it here makes teardown happen synchronously on
     // pop; the `sessionClose` in `gFFI.close()` becomes a no-op once removed.
     unawaited(bind.sessionClose(sessionId: sessionId));
-    // https://github.com/flutter/flutter/issues/64935
-    super.dispose();
     gFFI.dialogManager.hideMobileActionsOverlay(store: false);
     gFFI.inputModel.listenToMouse(false);
     gFFI.imageModel.disposeImage();

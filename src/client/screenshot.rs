@@ -97,3 +97,10 @@ pub fn set_screenshot(data: bytes::Bytes) {
 pub fn handle_screenshot(action: String) -> String {
     SCREENSHOT.lock().unwrap().handle_screenshot(action)
 }
+
+/// Takes the captured screenshot out of the cache so the frontend can place it
+/// into the system clipboard itself. Platforms whose clipboard lives in the UI
+/// layer (HarmonyOS) use this instead of the desktop clipboard path.
+pub fn take_screenshot() -> Option<bytes::Bytes> {
+    SCREENSHOT.lock().unwrap().data.take()
+}

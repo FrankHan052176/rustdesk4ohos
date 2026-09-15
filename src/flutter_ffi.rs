@@ -268,7 +268,8 @@ pub fn session_close(session_id: SessionID) {
         session.close_event_stream(session_id);
         session.close();
     }
-    #[cfg(all(target_env = "ohos", feature = "ohos-har"))]
+    // Any OHOS profile keeps per-session clipboard state now, so it has to be dropped here.
+    #[cfg(target_env = "ohos")]
     crate::platform::ohos::finish_session(&session_id);
 }
 
@@ -288,6 +289,21 @@ pub fn session_handle_screenshot(
     #[allow(unused_variables)] session_id: SessionID,
     action: String,
 ) -> String {
+    #[cfg(target_env = "ohos")]
+    if matches!(
+        crate::client::screenshot::ScreenshotAction::from(action.as_str()),
+        crate::client::screenshot::ScreenshotAction::CopyToClipboard
+    ) {
+        if let Some(data) = crate::client::screenshot::take_screenshot() {
+            let encoded = hbb_common::base64::encode(&data);
+            crate::flutter::push_session_event(
+                &session_id,
+                "clipboard_screenshot",
+                vec![("png", encoded.as_str())],
+            );
+            return "".to_owned();
+        }
+    }
     crate::client::screenshot::handle_screenshot(action)
 }
 
@@ -1812,9 +1828,10 @@ pub fn main_set_ohos_host_clipboard_enabled(enabled: bool) {
     #[cfg(target_env = "ohos")]
     {
         crate::platform::ohos::set_host_clipboard_available(enabled);
-        if !enabled {
-            crate::ui_cm_interface::switch_permission_all("clipboard".to_owned(), false);
-        }
+        crate::ui_cm_interface::switch_permission_all(
+            "clipboard".to_owned(),
+            enabled && config::Config::get_bool_option(config::keys::OPTION_ENABLE_CLIPBOARD),
+        );
     }
     #[cfg(not(target_env = "ohos"))]
     let _ = enabled;
@@ -1836,6 +1853,210 @@ pub fn main_take_ohos_host_clipboard_text() -> Option<String> {
     }
     #[cfg(not(target_env = "ohos"))]
     None
+}
+
+pub fn main_ohos_client_clipboard_required() -> bool {
+    #[cfg(target_env = "ohos")]
+    {
+        return crate::flutter::sessions::is_ohos_client_clipboard_required();
+    }
+    #[cfg(not(target_env = "ohos"))]
+    false
+}
+
+pub fn main_update_ohos_client_clipboard_text(text: String) -> bool {
+    #[cfg(target_env = "ohos")]
+    {
+        return crate::flutter::sessions::is_ohos_client_clipboard_required()
+            && crate::platform::ohos::update_client_text_clipboard(text);
+    }
+    #[cfg(not(target_env = "ohos"))]
+    false
+}
+
+pub fn main_take_ohos_client_clipboard_text() -> Option<String> {
+    #[cfg(target_env = "ohos")]
+    {
+        return crate::platform::ohos::take_client_received_text_clipboard();
+    }
+    #[cfg(not(target_env = "ohos"))]
+    None
+}
+
+/// Rich clipboard payload the OHOS frontend applies to the system pasteboard.
+///
+/// `image_format` is `png` for a self-describing PNG payload, or `rgba` for raw pixels that
+/// come with `width`/`height`. The platform channel also produces `bgra` for raw pixels on
+/// its own side; this bridge never emits it because the remote protocol carries only RGBA or
+/// PNG.
+#[derive(Clone, Debug, Default)]
+pub struct OhosClipboardData {
+    pub text: Option<String>,
+    pub html: Option<String>,
+    pub image: Vec<u8>,
+    pub image_format: String,
+    pub width: i32,
+    pub height: i32,
+}
+
+/// UI session id of the active, clipboard-authorized session, empty when there is none.
+pub fn main_get_ohos_clipboard_session() -> String {
+    #[cfg(target_env = "ohos")]
+    {
+        return crate::platform::ohos::active_clipboard_ui_session_id()
+            .map(|session_id| session_id.to_string())
+            .unwrap_or_default();
+    }
+    #[cfg(not(target_env = "ohos"))]
+    String::new()
+}
+
+/// Register the private incoming-file root the frontend prepared for a session.
+///
+/// Called after adding the session, before starting its connection, so the first remote
+/// file announcement already has an incoming root. Receiving/sending data remains gated by
+/// the active authenticated session and its clipboard permissions.
+pub fn main_set_ohos_client_clipboard_file_root(session_id: String, root: String) -> bool {
+    #[cfg(all(target_env = "ohos", feature = "cliprdr-file-service"))]
+    {
+        return crate::platform::ohos::set_ui_client_clipboard_file_root(&session_id, root).is_ok();
+    }
+    #[cfg(not(all(target_env = "ohos", feature = "cliprdr-file-service")))]
+    {
+        let _ = (session_id, root);
+        false
+    }
+}
+
+/// Forward frontend clipboard text; `host` targets the controlled-host channel instead of a
+/// UI session, and then requires `host_active` plus native host clipboard authorization.
+pub fn main_send_ohos_clipboard_text(session_id: String, text: String, host_active: bool) -> bool {
+    #[cfg(target_env = "ohos")]
+    {
+        return crate::platform::ohos::send_ohos_clipboard_text(&session_id, text, host_active);
+    }
+    #[cfg(not(target_env = "ohos"))]
+    {
+        let _ = (session_id, text, host_active);
+        false
+    }
+}
+
+/// Forward frontend HTML clipboard content together with its plain-text projection.
+pub fn main_send_ohos_clipboard_html(
+    session_id: String,
+    html: String,
+    text: String,
+    host_active: bool,
+) -> bool {
+    #[cfg(target_env = "ohos")]
+    {
+        return crate::platform::ohos::send_ohos_clipboard_html(
+            &session_id,
+            html,
+            text,
+            host_active,
+        );
+    }
+    #[cfg(not(target_env = "ohos"))]
+    {
+        let _ = (session_id, html, text, host_active);
+        false
+    }
+}
+
+/// Forward a frontend PNG to the `host` channel or to one client session.
+pub fn main_send_ohos_clipboard_image(
+    session_id: String,
+    png: Vec<u8>,
+    host_active: bool,
+) -> bool {
+    #[cfg(target_env = "ohos")]
+    {
+        return crate::platform::ohos::send_ohos_clipboard_image(&session_id, png, host_active);
+    }
+    #[cfg(not(target_env = "ohos"))]
+    {
+        let _ = (session_id, png, host_active);
+        false
+    }
+}
+
+/// Forward a frontend file selection to one client session.
+///
+/// Files are client-side only on OHOS: the controlled side has no clipboard file service, so a
+/// `host` request reports `false` instead of pretending the transfer started. Completion comes
+/// back as the session-scoped `clipboard_files` event.
+pub fn main_send_ohos_clipboard_files(session_id: String, paths: Vec<String>) -> bool {
+    #[cfg(target_env = "ohos")]
+    {
+        return crate::platform::ohos::send_ohos_clipboard_files(&session_id, paths);
+    }
+    #[cfg(not(target_env = "ohos"))]
+    {
+        let _ = (session_id, paths);
+        false
+    }
+}
+
+/// Register the controlled-side directory the frontend prepared for incoming clipboard files.
+pub fn main_set_ohos_host_clipboard_file_root(root: String) -> bool {
+    #[cfg(target_env = "ohos")]
+    {
+        return crate::platform::ohos::set_host_clipboard_file_root(root).is_ok();
+    }
+    #[cfg(not(target_env = "ohos"))]
+    {
+        let _ = root;
+        false
+    }
+}
+
+/// Take the files a controller pasted into the controlled device's clipboard.
+pub fn main_take_ohos_host_clipboard_files() -> Vec<String> {
+    #[cfg(target_env = "ohos")]
+    {
+        return crate::platform::ohos::take_host_clipboard_files();
+    }
+    #[cfg(not(target_env = "ohos"))]
+    {
+        Vec::new()
+    }
+}
+
+/// Register the directory the frontend granted for recordings.
+pub fn main_set_ohos_recording_directory(path: String) -> bool {
+    #[cfg(target_env = "ohos")]
+    {
+        return crate::platform::ohos::set_recording_directory(path);
+    }
+    #[cfg(not(target_env = "ohos"))]
+    {
+        let _ = path;
+        false
+    }
+}
+
+/// Directory the recorder writes to, for the frontend to show the user.
+pub fn main_get_recording_directory() -> String {
+    crate::ui_interface::video_save_directory(false)
+}
+
+/// Take one pending rich clipboard payload for the frontend, `None` when there is nothing to
+/// apply for that target.
+pub fn main_take_ohos_clipboard_data(
+    session_id: String,
+    host_active: bool,
+) -> Option<OhosClipboardData> {
+    #[cfg(target_env = "ohos")]
+    {
+        return crate::platform::ohos::take_ohos_clipboard_data(&session_id, host_active);
+    }
+    #[cfg(not(target_env = "ohos"))]
+    {
+        let _ = (session_id, host_active);
+        None
+    }
 }
 
 pub fn main_start_ohos_host() -> String {

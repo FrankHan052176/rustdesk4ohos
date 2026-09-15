@@ -1,9 +1,37 @@
 {
   "app": {
-    "signingConfigs": [],
+    "signingConfigs": [
+      {
+        "name": "default",
+        "type": "HarmonyOS",
+        "material": {
+          "certpath": "/Users/frankhan/.ohos/config/default_ohos_uw8Hu5D7lAnXhbR2LKB-nUC86MN7AgDPpnw3iZehpZo=.cer",
+          "keyAlias": "debugKey",
+          "keyPassword": "0000001ABBF49103996611E13D1EF5479C6DDB6C11792882C5A7C7BC019CDE1543364FA31733E686D8D3",
+          "profile": "/Users/frankhan/.ohos/config/default_ohos_uw8Hu5D7lAnXhbR2LKB-nUC86MN7AgDPpnw3iZehpZo=.p7b",
+          "signAlg": "SHA256withECDSA",
+          "storeFile": "/Users/frankhan/.ohos/config/default_ohos_uw8Hu5D7lAnXhbR2LKB-nUC86MN7AgDPpnw3iZehpZo=.p12",
+          "storePassword": "0000001A8A039D8AE9A8FFB03821BBB5AA5D82FCFF7E509EB68B8BA6A17EE84487158138E8746693702E"
+        }
+      },
+      {
+        "name": "publishRelease",
+        "type": "HarmonyOS",
+        "material": {
+          "certpath": "/Users/frankhan/HarmonyOS/R_AppGallerySigning/FrankHan_Publish.cer",
+          "keyAlias": "FrankHan",
+          "keyPassword": "00000022080DAAD3C63926FE5329D7BAF75A51B5AEE2BFF344C41C0BEDDCACC1E50E9553632CACE7A1923889A6069A255B23",
+          "profile": "/Users/frankhan/HarmonyOS/R_AppGallerySigning/RustDesk-Flutter/RustDesk_UO_PublishRelease.p7b",
+          "signAlg": "SHA256withECDSA",
+          "storeFile": "/Users/frankhan/HarmonyOS/R_AppGallerySigning/FrankHan.p12",
+          "storePassword": "00000022E94D26F0312FBEFE32EAB7B9EEB1CE8C3E36C2D84AC0C2A16BB02BDFA5BEABD6165EE181A7953C53532A0EAFB5FF"
+        }
+      }
+    ],
     "products": [
       {
         "name": "default",
+        "signingConfig": "default",
         "compatibleSdkVersion": "6.1.0(23)",
         "runtimeOS": "HarmonyOS",
         "targetSdkVersion": "6.1.0(23)"
@@ -12,7 +40,8 @@
         "name": "publish",
         "compatibleSdkVersion": "6.1.0(23)",
         "runtimeOS": "HarmonyOS",
-        "targetSdkVersion": "6.1.0(23)"
+        "targetSdkVersion": "6.1.0(23)",
+        "signingConfig": "publishRelease"
       }
     ],
     "buildModeSet": [

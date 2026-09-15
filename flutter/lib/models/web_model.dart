@@ -259,6 +259,35 @@ class PlatformFFI {
 
   Future<void> setKeepScreenOn(bool enabled) async {}
 
+  Future<String> getOhosDownloadDirectory() async =>
+      throw UnsupportedError('HarmonyOS Download directory is unavailable');
+
+  Future<bool> setOhosClipboardEnabled(bool enabled,
+          {bool requestPermission = false}) async =>
+      false;
+
+  Future<bool> syncOhosClipboard({required bool hostActive}) async => false;
+
+  Future<void> prepareOhosClipboardSession(String sessionId) async =>
+      throw UnsupportedError('HarmonyOS clipboard is unavailable');
+
+  Future<void> closeOhosClipboardSession(String sessionId) async =>
+      throw UnsupportedError('HarmonyOS clipboard is unavailable');
+
+  Future<void> applyOhosClipboardFiles(
+          String sessionId, List<String> files) async =>
+      throw UnsupportedError('HarmonyOS clipboard is unavailable');
+
+  Future<void> applyOhosClipboardImage(
+          String sessionId, Uint8List png) async =>
+      throw UnsupportedError('HarmonyOS clipboard is unavailable');
+
+  Future<void> setFullscreen(bool enabled) async {}
+
+  Future<void> terminateWindow() async {}
+
+  Future<String> ensureOhosRecordingDirectory() async => '';
+
   Future<String> startOhosHost() async => 'OHOS host is unavailable';
 
   Future<String> stopOhosHost() async => '';

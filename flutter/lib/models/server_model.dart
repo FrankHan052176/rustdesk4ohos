@@ -31,6 +31,7 @@ class ServerModel with ChangeNotifier {
   bool _audioOk = false;
   bool _fileOk = false;
   bool _clipboardOk = false;
+  bool _clipboardChanging = false;
   bool _showElevation = false;
   bool hideCm = false;
   int _connectStatus = 0; // Rendezvous Server status
@@ -65,6 +66,8 @@ class ServerModel with ChangeNotifier {
   bool get fileOk => _fileOk;
 
   bool get clipboardOk => _clipboardOk;
+
+  bool get clipboardChanging => _clipboardChanging;
 
   bool get showElevation => _showElevation;
 
@@ -177,6 +180,29 @@ class ServerModel with ChangeNotifier {
         }
       }
 
+      if (isOhos) {
+        final allowed = await platformFFI.syncOhosClipboard(
+          hostActive: _isStart &&
+              _clipboardOk &&
+              _clients.any((client) =>
+                  client.authorized &&
+                  !client.disconnected &&
+                  client.clipboard &&
+                  !client.isFileTransfer &&
+                  !client.isViewCamera &&
+                  !client.isTerminal &&
+                  client.portForward.isEmpty),
+        );
+        if (_clipboardOk &&
+            !allowed &&
+            !_clipboardChanging &&
+            !_serviceStarting) {
+          _clipboardOk = false;
+          await bind.mainSetOption(key: kOptionEnableClipboard, value: 'N');
+          notifyListeners();
+        }
+      }
+
       updatePasswordModel();
     }
 
@@ -234,7 +260,17 @@ class ServerModel with ChangeNotifier {
     final fileOption = await bind.mainGetOption(key: kOptionEnableFileTransfer);
     _audioOk = audioOption != 'N';
     _fileOk = fileOption != 'N';
-    _clipboardOk = false;
+    if (!_clipboardChanging) {
+      final clipOption = await bind.mainGetOption(key: kOptionEnableClipboard);
+      try {
+        _clipboardOk =
+            await platformFFI.setOhosClipboardEnabled(clipOption != 'N');
+      } catch (error) {
+        _clipboardOk = false;
+        await platformFFI.setOhosClipboardEnabled(false);
+        debugPrint('Failed to check OHOS clipboard permission: $error');
+      }
+    }
     _inputOk = false;
     notifyListeners();
   }
@@ -349,6 +385,30 @@ class ServerModel with ChangeNotifier {
   }
 
   toggleClipboard() async {
+    if (isOhos) {
+      if (_clipboardChanging) return;
+      _clipboardChanging = true;
+      notifyListeners();
+      try {
+        final requested = !_clipboardOk;
+        final enabled = await platformFFI.setOhosClipboardEnabled(requested,
+            requestPermission: requested);
+        await bind.mainSetOption(
+            key: kOptionEnableClipboard,
+            value: enabled ? defaultOptionYes : 'N');
+        _clipboardOk = enabled;
+        if (requested && !enabled) showToast(translate('Permission denied'));
+      } catch (error) {
+        _clipboardOk = false;
+        await platformFFI.setOhosClipboardEnabled(false);
+        debugPrint('Failed to change OHOS clipboard permission: $error');
+        showToast(translate('Failed'));
+      } finally {
+        _clipboardChanging = false;
+        notifyListeners();
+      }
+      return;
+    }
     _clipboardOk = !clipboardOk;
     bind.mainSetOption(
         key: kOptionEnableClipboard,

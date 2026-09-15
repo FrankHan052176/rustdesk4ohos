@@ -598,10 +598,11 @@ List<TTextMenu> toolbarControls(BuildContext context, String id, FFI ffi) {
         onPressed: () => ffi.recordingModel.toggle()));
   }
 
-  // to-do:
-  // 1. Web desktop
-  // 2. Mobile, copy the image to the clipboard
-  if ((isDefaultConn || ffi.connType == ConnType.viewCamera) && isDesktop) {
+  // to-do: Web desktop
+  // A HarmonyOS desktop takes the picture into its own pasteboard through the platform
+  // channel, so the action is available there as well.
+  if ((isDefaultConn || ffi.connType == ConnType.viewCamera) &&
+      (isDesktop || isOhosDesktop)) {
     final isScreenshotSupported = bind.sessionGetCommonSync(
         sessionId: sessionId, key: 'is_screenshot_supported', param: '');
     if ('true' == isScreenshotSupported) {

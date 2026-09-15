@@ -2397,6 +2397,17 @@ pub mod sessions {
         SESSIONS.read().unwrap().values().cloned().collect()
     }
 
+    #[cfg(target_env = "ohos")]
+    pub fn is_ohos_client_clipboard_required() -> bool {
+        SESSIONS.read().unwrap().values().any(|session| {
+            session.is_default()
+                && session.is_ui_active()
+                && !session.session_handlers.read().unwrap().is_empty()
+                && session.connection_round_state.lock().unwrap().is_connected()
+                && session.is_text_clipboard_required()
+        })
+    }
+
     #[inline]
     #[cfg(not(target_os = "ios"))]
     pub fn has_sessions_running(conn_type: ConnType) -> bool {

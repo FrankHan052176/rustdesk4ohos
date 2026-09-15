@@ -10,11 +10,11 @@
     },
     {
       "name": "EntryAbility_label",
-      "value": "RustDesk"
+      "value": "RustDesk Unofficial"
     },
     {
-      "name": "microphone_permission_reason",
-      "value": "允许 RustDesk 为远程桌面会话采集音频。"
+      "name": "READ_PASTEBOARD_reason",
+      "value": "允许 RustDesk Unofficial 与已授权的远程桌面会话同步剪贴板文本。"
     }
   ]
 }

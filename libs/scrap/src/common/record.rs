@@ -1,4 +1,7 @@
 use crate::CodecFormat;
+
+#[cfg(target_env = "ohos")]
+use crate::EncodeInput;
 #[cfg(feature = "hwcodec")]
 use hbb_common::anyhow::anyhow;
 use hbb_common::{
@@ -171,6 +174,10 @@ impl Recorder {
                 CodecFormat::VP8 | CodecFormat::VP9 | CodecFormat::AV1 => Some(Box::new(
                     WebmRecorder::new(self.ctx.clone(), (*ctx2).clone())?,
                 )),
+                #[cfg(target_env = "ohos")]
+                CodecFormat::H264 | CodecFormat::H265 => Some(Box::new(
+                    OhosTranscodeRecorder::new(self.ctx.clone(), (*ctx2).clone())?,
+                )),
                 #[cfg(feature = "hwcodec")]
                 _ => Some(Box::new(HwRecorder::new(
                     self.ctx.clone(),
@@ -232,14 +239,14 @@ impl Recorder {
                     self.as_mut().map(|x| x.write_video(f));
                 }
             }
-            #[cfg(feature = "hwcodec")]
+#[cfg(any(feature = "hwcodec", target_env = "ohos"))]
             video_frame::Union::H264s(h264s) => {
                 for f in h264s.frames.iter() {
                     self.check_pts(f.pts, f.key, w, h, format)?;
                     self.as_mut().map(|x| x.write_video(f));
                 }
             }
-            #[cfg(feature = "hwcodec")]
+#[cfg(any(feature = "hwcodec", target_env = "ohos"))]
             video_frame::Union::H265s(h265s) => {
                 for f in h265s.frames.iter() {
                     self.check_pts(f.pts, f.key, w, h, format)?;
@@ -380,6 +387,96 @@ struct HwRecorder {
     written: bool,
     key: bool,
     start: Instant,
+}
+
+/// Records an H.264/H.265 stream on HarmonyOS by re-encoding it into a VP9 webm.
+///
+/// The upstream hardware recorder muxes the stream straight into MP4 through `hwcodec`,
+/// which does not exist on OHOS. Here the platform decoder produces I420 frames, the
+/// libvpx encoder turns them back into VP9, and the webm muxer writes the file.
+#[cfg(target_env = "ohos")]
+struct OhosTranscodeRecorder {
+    decoder: crate::common::ohos::avcodec::OhosVideoDecoder,
+    encoder: crate::codec::Encoder,
+    webm: WebmRecorder,
+    yuv: Vec<u8>,
+}
+
+#[cfg(target_env = "ohos")]
+impl RecorderApi for OhosTranscodeRecorder {
+    fn new(ctx: RecorderContext, ctx2: RecorderContext2) -> ResultType<Self> {
+        let mut target = ctx2.clone();
+        // The file holds re-encoded VP9 frames, so name it after what it contains.
+        target.format = CodecFormat::VP9;
+        target.set_filename(&ctx)?;
+        let source = ctx2.format.clone();
+        let decoder = crate::common::ohos::avcodec::OhosVideoDecoder::new(
+            source,
+            crate::common::ohos::DirectRenderTarget {
+                // No surface: the recorder needs the decoded frames in memory.
+                surface_id: None,
+                decode_size: Some((ctx2.width, ctx2.height)),
+            },
+        )?;
+        let encoder = crate::codec::Encoder::new(
+            crate::codec::EncoderCfg::VPX(crate::vpxcodec::VpxEncoderConfig {
+                width: ctx2.width as _,
+                height: ctx2.height as _,
+                quality: 1.0,
+                codec: crate::vpxcodec::VpxVideoCodecId::VP9,
+                keyframe_interval: None,
+            }),
+            false,
+        )?;
+        let webm = WebmRecorder::new(ctx, target)?;
+        Ok(Self {
+            decoder,
+            encoder,
+            webm,
+            yuv: Vec::new(),
+        })
+    }
+
+    fn write_video(&mut self, frame: &EncodedVideoFrame) -> bool {
+        let images = match self.decoder.decode(&frame.data, frame.key) {
+            Ok(images) => images,
+            Err(e) => {
+                log::error!("OHOS recording decode failed: {e}");
+                return false;
+            }
+        };
+        let Some(image) = images.last() else {
+            return false;
+        };
+        let fmt = self.encoder.yuvfmt();
+        image.write_i420(&mut self.yuv, &fmt);
+        let vf = match self
+            .encoder
+            .encode_to_message(EncodeInput::YUV(&self.yuv), frame.pts)
+        {
+            Ok(vf) => vf,
+            Err(e) => {
+                log::error!("OHOS recording encode failed: {e}");
+                return false;
+            }
+        };
+        let frames = match vf.union {
+            Some(video_frame::Union::Vp9s(vp9s)) => vp9s.frames,
+            Some(video_frame::Union::Vp8s(vp8s)) => vp8s.frames,
+            _ => Vec::new(),
+        };
+        if frames.is_empty() {
+            log::warn!("OHOS recording encoder produced no VP8/VP9 frame");
+            return false;
+        }
+        let mut written = false;
+        for mut encoded in frames {
+            // Keep the source timeline: the muxer starts a new file on a pts rewind.
+            encoded.pts = frame.pts;
+            written = self.webm.write_video(&encoded) || written;
+        }
+        written
+    }
 }
 
 #[cfg(feature = "hwcodec")]

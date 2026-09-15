@@ -1053,14 +1053,24 @@ impl<T: InvokeUiSession> Remote<T> {
                 self.elevation_requested = true;
             }
             Data::NewVoiceCall => {
-                let msg = new_voice_call_request(true);
-                // Save the voice call request timestamp for the further validation.
-                self.voice_call_request_timestamp = Some(
-                    NonZeroI64::new(msg.voice_call_request().req_timestamp)
-                        .unwrap_or(NonZeroI64::new(get_time()).unwrap()),
-                );
-                allow_err!(peer.send(&msg).await);
-                self.handler.on_voice_call_waiting();
+                #[cfg(target_env = "ohos")]
+                {
+                    // Voice call stays closed on HarmonyOS: the frontend offers no entry
+                    // point and the platform cannot carry the call.
+                    self.handler
+                        .on_voice_call_closed("Voice call is not supported on HarmonyOS");
+                }
+                #[cfg(not(target_env = "ohos"))]
+                {
+                    let msg = new_voice_call_request(true);
+                    // Save the voice call request timestamp for the further validation.
+                    self.voice_call_request_timestamp = Some(
+                        NonZeroI64::new(msg.voice_call_request().req_timestamp)
+                            .unwrap_or(NonZeroI64::new(get_time()).unwrap()),
+                    );
+                    allow_err!(peer.send(&msg).await);
+                    self.handler.on_voice_call_waiting();
+                }
             }
             Data::CloseVoiceCall => {
                 self.stop_voice_call();

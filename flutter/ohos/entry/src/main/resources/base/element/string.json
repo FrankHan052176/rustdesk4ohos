@@ -10,11 +10,11 @@
     },
     {
       "name": "EntryAbility_label",
-      "value": "RustDesk"
+      "value": "RustDesk Unofficial"
     },
     {
-      "name": "microphone_permission_reason",
-      "value": "Allow RustDesk to capture audio for remote desktop sessions."
+      "name": "READ_PASTEBOARD_reason",
+      "value": "Allow RustDesk Unofficial to synchronize clipboard text with authorized remote desktop sessions."
     }
   ]
 }

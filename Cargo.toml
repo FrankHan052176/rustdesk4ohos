@@ -27,7 +27,9 @@ use_rubato = ["rubato"]
 use_dasp = ["dasp"]
 flutter = ["flutter_rust_bridge"]
 ohos-har = ["flutter"]
-ohos-flutter = ["flutter"]
+# The Flutter frontend serves and materializes clipboard files through its own platform
+# channel, so this profile needs the native cliprdr file service compiled in.
+ohos-flutter = ["flutter", "cliprdr-file-service"]
 default = ["use_dasp"]
 hwcodec = ["scrap/hwcodec"]
 vram = ["scrap/vram"]

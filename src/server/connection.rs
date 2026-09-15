@@ -11,7 +11,8 @@ use crate::clipboard::{update_clipboard, ClipboardSide};
 #[cfg(any(
     target_os = "windows",
     all(target_os = "linux", not(target_env = "ohos")),
-    target_os = "macos"
+    target_os = "macos",
+    all(target_env = "ohos", feature = "cliprdr-file-service")
 ))]
 use crate::clipboard_file::*;
 #[cfg(target_os = "android")]
@@ -382,6 +383,8 @@ pub struct Connection {
     #[cfg(not(any(target_os = "android", target_os = "ios", target_env = "ohos")))]
     terminal_user_token: Option<TerminalUserToken>,
     terminal_generic_service: Option<Box<GenericService>>,
+    #[cfg(all(target_env = "ohos", feature = "cliprdr-file-service"))]
+    ohos_clipboard_materializer: crate::platform::ohos_clipboard_file::OhosClipboardMaterializer,
 }
 
 impl ConnInner {
@@ -510,8 +513,7 @@ impl Connection {
                 && Self::permission(keys::OPTION_ENABLE_CLIPBOARD, &control_permissions),
             audio: Self::permission(keys::OPTION_ENABLE_AUDIO, &control_permissions),
             // to-do: make sure is the option correct here
-            file: !cfg!(target_env = "ohos")
-                && Self::permission(keys::OPTION_ENABLE_FILE_TRANSFER, &control_permissions),
+            file: Self::permission(keys::OPTION_ENABLE_FILE_TRANSFER, &control_permissions),
             restart: !cfg!(target_env = "ohos")
                 && Self::permission(keys::OPTION_ENABLE_REMOTE_RESTART, &control_permissions),
             recording: !cfg!(target_env = "ohos")
@@ -582,6 +584,8 @@ impl Connection {
             terminal_generic_service: None,
             conn_audit_primary_auth: ConnAuditPrimaryAuth::None,
             conn_audit_two_factor: ConnAuditTwoFactor::None,
+            #[cfg(all(target_env = "ohos", feature = "cliprdr-file-service"))]
+            ohos_clipboard_materializer: Default::default(),
         };
         let addr = hbb_common::try_into_v4(addr);
         if !conn.on_open(addr).await {
@@ -1136,6 +1140,29 @@ impl Connection {
                     conn.file_remove_log_control.on_timer().drain(..).map(|x| conn.send_to_cm(x)).count();
                     #[cfg(any(feature = "hwcodec", target_env = "ohos"))]
                     conn.update_supported_encoding();
+                    #[cfg(all(target_env = "ohos", feature = "cliprdr-file-service"))]
+                    if conn.is_remote()
+                        && conn.clipboard_enabled()
+                        && crate::is_support_file_copy_paste(&conn.lr.version)
+                    {
+                        if let Some(paths) = crate::platform::ohos::take_host_file_clipboard() {
+                            match clipboard::platform::unix::serv_files::prepare_files_for_conn(
+                                &paths,
+                            ) {
+                                Ok(snapshot) => {
+                                    clipboard::platform::unix::serv_files::commit_files_for_conn(
+                                        conn.inner.id(),
+                                        snapshot,
+                                    );
+                                    let msg = crate::clipboard_file::clip_2_msg(
+                                        crate::clipboard_file::unix_file_clip::get_format_list(),
+                                    );
+                                    conn.send(msg).await;
+                                }
+                                Err(e) => log::error!("failed to stage host file clipboard: {e}"),
+                            }
+                        }
+                    }
                 }
                 _ = test_delay_timer.tick() => {
                     if last_recv_time.elapsed() >= SEC30 {
@@ -2804,13 +2831,22 @@ impl Connection {
         }
         // After handling CloseReason messages, proceed to process other message types
         if let Some(message::Union::LoginRequest(lr)) = msg.union {
-            if cfg!(target_env = "ohos") && lr.union.is_some() {
-                self.send_login_error(
-                    "HarmonyOS host currently supports screen-and-audio viewing only",
-                )
-                .await;
-                sleep(1.).await;
-                return false;
+            if cfg!(target_env = "ohos") {
+                // OHOS hosts serve file transfer and IP tunnelling; camera and
+                // terminal have no host implementation yet and stay refused.
+                match lr.union.as_ref() {
+                    Some(login_request::Union::FileTransfer(_))
+                    | Some(login_request::Union::PortForward(_)) => {}
+                    Some(_) => {
+                        self.send_login_error(
+                            "HarmonyOS host supports screen, audio, file transfer and IP tunnelling only",
+                        )
+                        .await;
+                        sleep(1.).await;
+                        return false;
+                    }
+                    None => {}
+                }
             }
             if cfg!(target_env = "ohos") && !self.audio {
                 self.send_login_error(
@@ -3384,7 +3420,11 @@ impl Connection {
                         crate::platform::ohos::receive_host_clipboards(_mcb);
                     }
                 }
-                #[cfg(any(target_os = "windows", feature = "unix-file-copy-paste"))]
+                #[cfg(any(
+                    target_os = "windows",
+                    feature = "unix-file-copy-paste",
+                    all(target_env = "ohos", feature = "cliprdr-file-service")
+                ))]
                 Some(message::Union::Cliprdr(clip)) => {
                     if let Some(cliprdr::Union::Files(files)) = &clip.union {
                         self.post_file_audit(
@@ -3453,6 +3493,38 @@ impl Connection {
                                         continue;
                                     }
                                 }
+                                self.send(msg).await;
+                            }
+                        }
+
+                        #[cfg(all(target_env = "ohos", feature = "cliprdr-file-service"))]
+                        if crate::is_support_file_copy_paste(&self.lr.version) {
+                            let mut out_msgs = vec![];
+                            let serves_local_files = matches!(
+                                &clip,
+                                clipboard::ClipboardFile::MonitorReady
+                                    | clipboard::ClipboardFile::FormatListResponse { .. }
+                                    | clipboard::ClipboardFile::FormatDataRequest { .. }
+                                    | clipboard::ClipboardFile::FileContentsRequest { .. }
+                            );
+                            if serves_local_files {
+                                out_msgs =
+                                    crate::clipboard_file::unix_file_clip::serve_clip_messages(
+                                        crate::clipboard::ClipboardSide::Host,
+                                        clip,
+                                        self.inner.id(),
+                                    );
+                            } else {
+                                let root = crate::platform::ohos::get_host_clipboard_file_root();
+                                let (messages, completed_paths) = self
+                                    .ohos_clipboard_materializer
+                                    .handle(clip, self.inner.id(), root.as_deref());
+                                out_msgs = messages;
+                                if let Some(paths) = completed_paths {
+                                    crate::platform::ohos::push_host_clipboard_files(paths);
+                                }
+                            }
+                            for msg in out_msgs.into_iter() {
                                 self.send(msg).await;
                             }
                         }
@@ -3959,12 +4031,25 @@ impl Connection {
                 }
                 Some(message::Union::VoiceCallRequest(request)) => {
                     if request.is_connect {
-                        self.voice_call_request_timestamp = Some(
-                            NonZeroI64::new(request.req_timestamp)
-                                .unwrap_or(NonZeroI64::new(get_time()).unwrap()),
-                        );
-                        // Notify the connection manager.
-                        self.send_to_cm(Data::VoiceCallIncoming);
+                        #[cfg(target_env = "ohos")]
+                        {
+                            // Voice call is closed for HarmonyOS targets: refuse rather than
+                            // prompting for a call this platform cannot carry.
+                            let timestamp = NonZeroI64::new(request.req_timestamp)
+                                .unwrap_or(NonZeroI64::new(get_time()).unwrap());
+                            self.send(new_voice_call_response(timestamp.get(), false))
+                                .await;
+                            log::info!("Voice call request refused on HarmonyOS");
+                        }
+                        #[cfg(not(target_env = "ohos"))]
+                        {
+                            self.voice_call_request_timestamp = Some(
+                                NonZeroI64::new(request.req_timestamp)
+                                    .unwrap_or(NonZeroI64::new(get_time()).unwrap()),
+                            );
+                            // Notify the connection manager.
+                            self.send_to_cm(Data::VoiceCallIncoming);
+                        }
                     } else {
                         self.close_voice_call().await;
                     }
@@ -5199,6 +5284,11 @@ impl Connection {
         let data = ipc::Data::Close;
         self.tx_to_cm.send(data).ok();
         self.port_forward_socket.take();
+        #[cfg(all(target_env = "ohos", feature = "cliprdr-file-service"))]
+        {
+            self.ohos_clipboard_materializer.cancel();
+            clipboard::platform::unix::serv_files::clear_conn_files(self.inner.id());
+        }
     }
 
     // The `reason` should be consistent with `check_if_retry` if not empty

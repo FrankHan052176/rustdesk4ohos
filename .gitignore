@@ -1,6 +1,6 @@
 /build
 /target
-/native/ohos_bridge/target/
+/native/ohos_bridge/target
 /native/ohos_bridge/src/bridge_generated.rs
 /native/ohos_bridge/src/bridge_generated.io.rs
 .vscode
@@ -66,3 +66,4 @@ flutter/web/
 /.hvigor/
 /dist/
 /logs/
+/flutter/build

@@ -103,14 +103,7 @@ mod pa_impl {
             AUDIO_ZERO_COUNT = 0;
         }
         #[cfg(target_env = "ohos")]
-        let _ohos_audio_input = match super::ohos_audio::OhosAudioInput::start() {
-            Ok(input) => input,
-            Err(error) => {
-                log::error!("Unable to start OHOS host audio capture: {error}");
-                crate::ui_cm_interface::switch_permission_all("audio".to_owned(), false);
-                return Err(anyhow!("Unable to start OHOS host audio capture: {error}"));
-            }
-        };
+        log::info!("OHOS host audio capture is not provided");
         let mut encoder = Encoder::new(crate::platform::PA_SAMPLE_RATE, Stereo, LowDelay)?;
         #[cfg(all(target_os = "linux", not(target_env = "ohos")))]
         allow_err!(
@@ -170,16 +163,7 @@ mod pa_impl {
                 hbb_common::sleep(0.1).await;
             }
             #[cfg(target_env = "ohos")]
-            if let Some(mobile_data) = crate::platform::ohos::take_host_audio_f32_stereo() {
-                let aligned = align_to_32_if_needed(&mobile_data);
-                let bytes = aligned.as_deref().unwrap_or(&mobile_data[..]);
-                let data = unsafe {
-                    std::slice::from_raw_parts::<f32>(bytes.as_ptr() as _, bytes.len() / 4)
-                };
-                send_f32(data, &mut encoder, &sp);
-            } else {
-                hbb_common::sleep(0.1).await;
-            }
+            hbb_common::sleep(0.1).await;
         }
         Ok(())
     }

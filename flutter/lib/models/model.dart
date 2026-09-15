@@ -27,6 +27,7 @@ import 'package:flutter_hbb/models/desktop_render_texture.dart';
 import 'package:flutter_hbb/models/terminal_model.dart';
 import 'package:flutter_hbb/common/shared_state.dart';
 import 'package:flutter_hbb/utils/multi_window_manager.dart';
+import 'package:flutter_hbb/utils/ohos_session_window.dart';
 import 'package:flutter_hbb/utils/http_service.dart' as http;
 import 'package:tuple/tuple.dart';
 import 'package:image/image.dart' as img2;
@@ -361,6 +362,17 @@ class FfiModel with ChangeNotifier {
         await parent.target?.cursorModel.updateCursorPosition(evt, peerId);
       } else if (name == 'clipboard') {
         Clipboard.setData(ClipboardData(text: evt['content']));
+      } else if (name == 'clipboard_files' && isOhosDesktop) {
+        final paths = evt['paths'];
+        final decoded = paths is String ? jsonDecode(paths) : paths;
+        await platformFFI.applyOhosClipboardFiles(
+            sessionId.toString(), List<String>.from(decoded as List));
+      } else if (name == 'clipboard_screenshot' && isOhosDesktop) {
+        final png = evt['png'];
+        if (png is String && png.isNotEmpty) {
+          await platformFFI.applyOhosClipboardImage(
+              sessionId.toString(), base64Decode(png));
+        }
       } else if (name == 'permission') {
         updatePermission(evt, peerId);
       } else if (name == 'chat_client_mode') {
@@ -501,12 +513,27 @@ class FfiModel with ChangeNotifier {
         close();
         Future.delayed(Duration.zero, () async {
           final ts = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-          String? outputFile = await FilePicker.platform.saveFile(
-            dialogTitle: '${translate('Save as')}...',
-            fileName: 'screenshot_$ts.png',
-            allowedExtensions: ['png'],
-            type: FileType.custom,
-          );
+          String? outputFile;
+          if (isOhosDesktop) {
+            // HarmonyOS registers no file picker plugin; the granted Download directory is
+            // the same destination the file manager downloads into.
+            try {
+              final directory = await platformFFI.getOhosDownloadDirectory();
+              outputFile = '$directory/screenshot_$ts.png';
+            } catch (error) {
+              msgBox(sessionId, 'custom-nook-nocancel-hasclose-error',
+                  'Take screenshot', '$error', '', dialogManager);
+              bind.sessionHandleScreenshot(sessionId: sessionId, action: '2');
+              return;
+            }
+          } else {
+            outputFile = await FilePicker.platform.saveFile(
+              dialogTitle: '${translate('Save as')}...',
+              fileName: 'screenshot_$ts.png',
+              allowedExtensions: ['png'],
+              type: FileType.custom,
+            );
+          }
           if (outputFile == null) {
             bind.sessionHandleScreenshot(sessionId: sessionId, action: '2');
           } else {
@@ -3645,6 +3672,11 @@ class RecordingModel with ChangeNotifier {
     if (pi == null) return;
     bool value = !_start;
     if (value) {
+      if (isOhos) {
+        // The native recorder cannot open a folder picker, so ask for a writable,
+        // user-visible directory once and remember it.
+        await platformFFI.ensureOhosRecordingDirectory();
+      }
       await sessionRefreshVideo(sessionId, pi);
     }
     await bind.sessionRecordScreen(sessionId: sessionId, start: value);
@@ -3686,6 +3718,7 @@ class FFI {
   var version = '';
   var connType = ConnType.defaultConn;
   var closed = false;
+  Future<void>? _closeFuture;
 
   /// dialogManager use late to ensure init after main page binding [globalKey]
   late final dialogManager = OverlayDialogManager();
@@ -3719,7 +3752,7 @@ class FFI {
   Map<int, TerminalModel> get terminalModels => _terminalModels;
 
   FFI(SessionID? sId) {
-    sessionId = sId ?? (isDesktop ? Uuid().v4obj() : _constSessionId);
+    sessionId = sId ?? ((isDesktop || OhosSessionWindow.isSession) ? Uuid().v4obj() : _constSessionId);
     imageModel = ImageModel(WeakReference(this));
     ffiModel = FfiModel(WeakReference(this));
     cursorModel = CursorModel(WeakReference(this));
@@ -3776,6 +3809,8 @@ class FFI {
     int? display,
     List<int>? displays,
   }) {
+    _closeFuture = null;
+    OhosSessionWindow.registerSession(sessionId.toString(), () => close());
     closed = false;
     if (isMobile) mobileReset();
     assert(
@@ -3819,7 +3854,7 @@ class FFI {
         forceRelay: forceRelay ?? false,
         password: password ?? '',
         isSharedPassword: isSharedPassword ?? false,
-        connToken: connToken,
+        connToken: connToken ?? OhosSessionWindow.connectionToken,
       );
     } else if (display != null) {
       if (displays == null) {
@@ -3857,7 +3892,12 @@ class FFI {
     // Any operations that depend on the stream should be carefully handled.
     late final Stream<EventToUI> stream;
     if (isNewPeer || display == null || displays == null) {
-      stream = bind.sessionStart(sessionId: sessionId, id: id);
+      stream = isOhosDesktop && connType == ConnType.defaultConn
+          ? Stream.fromFuture(platformFFI.prepareOhosClipboardSession(sessionId.toString()))
+              .asyncExpand((_) => closed
+                  ? const Stream<EventToUI>.empty()
+                  : bind.sessionStart(sessionId: sessionId, id: id))
+          : bind.sessionStart(sessionId: sessionId, id: id);
     } else {
       // We have to put displays in `sessionStart()` to make sure the stream is ready
       // and then the displays' capturing requests can be sent.
@@ -3961,6 +4001,15 @@ class FFI {
           onEvent2UIRgba();
         }
       }();
+    }, onError: (Object error, StackTrace stack) async {
+      if (closed) return;
+      await close();
+      ffiModel.handleMsgBox({
+        'type': 'error',
+        'title': 'Connection Error',
+        'text': error.toString(),
+        'link': '',
+      }, sessionId, id);
     });
     // every instance will bind a stream
     this.id = id;
@@ -4020,7 +4069,14 @@ class FFI {
   }
 
   /// Close the remote session.
-  Future<void> close({bool closeSession = true}) async {
+  Future<void> close({bool closeSession = true}) {
+    if (OhosSessionWindow.isSession) {
+      return _closeFuture ??= _close(closeSession: closeSession);
+    }
+    return _close(closeSession: closeSession);
+  }
+
+  Future<void> _close({required bool closeSession}) async {
     closed = true;
     if (isWeb) {
       platformFFI.clearVideoFrameCallback();
@@ -4052,6 +4108,15 @@ class FFI {
     inputModel.disposeSideButtonTracking();
     if (closeSession) {
       await bind.sessionClose(sessionId: sessionId);
+      if (isOhosDesktop && connType == ConnType.defaultConn) {
+        await platformFFI.closeOhosClipboardSession(sessionId.toString());
+      }
+    }
+    if (OhosSessionWindow.isSession) {
+      // The pushed session route never pops itself, so a closed session must take its
+      // HarmonyOS window with it instead of leaving a black rectangle behind. The session
+      // teardown is already running here, hence the terminate-only call.
+      await platformFFI.terminateWindow();
     }
     debugPrint('model $id closed');
     id = '';

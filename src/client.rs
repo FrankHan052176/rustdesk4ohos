@@ -946,6 +946,8 @@ impl Client {
         #[cfg(not(any(target_os = "android", target_env = "ohos")))]
         clipboard_listener::unsubscribe(Self::CLIENT_CLIPBOARD_NAME);
         CLIPBOARD_STATE.lock().unwrap().running = false;
+        #[cfg(target_env = "ohos")]
+        crate::platform::ohos::set_client_clipboard_enabled(false);
         #[cfg(all(feature = "unix-file-copy-paste", target_os = "linux"))]
         if let Err(e) = crate::clipboard::try_empty_clipboard_files_sync(
             crate::clipboard::ClipboardSide::Client,

@@ -982,6 +982,14 @@ pub fn video_save_directory(root: bool) -> String {
         return dir.to_owned();
     }
     #[cfg(any(target_os = "android", target_os = "ios", target_env = "ohos"))]
+    #[cfg(target_env = "ohos")]
+    if let Some(dir) = crate::platform::ohos::recording_directory() {
+        let dir = try_create(&std::path::Path::new(&dir));
+        if !dir.is_empty() {
+            return dir;
+        }
+    }
+    #[cfg(any(target_os = "android", target_os = "ios", target_env = "ohos"))]
     if let Ok(home) = config::APP_HOME_DIR.read() {
         let mut path = home.to_owned();
         path.push_str(format!("/{appname}/ScreenRecord").as_str());

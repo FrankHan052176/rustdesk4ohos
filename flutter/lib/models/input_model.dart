@@ -1163,10 +1163,8 @@ class InputModel {
     }
   }
 
-  /// Send mouse movement event with distance in [x] and [y].
   Future<void> moveMouse(double x, double y) async {
-    if (!keyboardPerm) return;
-    if (isViewCamera) return;
+    if (isViewOnly && !showMyCursor) return;
     var x2 = x.toInt();
     var y2 = y.toInt();
     await bind.sessionSendMouse(
@@ -1450,6 +1448,7 @@ class InputModel {
   }
 
   void onPointerPanZoomEnd(PointerPanZoomEndEvent e) {
+    if (isViewOnly) return;
     if (isViewCamera) return;
     if (peerPlatform == kPeerPlatformAndroid) {
       handlePointerEvent('touch', kMouseEventTypePanEnd, e.position);
@@ -1703,19 +1702,27 @@ class InputModel {
     }
   }
 
-  void refreshMousePos() => handleMouse({
+  void refreshMousePos() {
+    // A view-only session forwards no pointer, not even the position the local toolbar
+    // leaves behind when it closes.
+    if (isViewOnly && !showMyCursor) return;
+    handleMouse({
+      'buttons': 0,
+      'type': _kMouseEventMove,
+    }, lastMousePos, edgeScroll: useEdgeScroll);
+  }
+
+  void tryMoveEdgeOnExit(Offset pos) {
+    if (isViewOnly && !showMyCursor) return;
+    handleMouse(
+      {
         'buttons': 0,
         'type': _kMouseEventMove,
-      }, lastMousePos, edgeScroll: useEdgeScroll);
-
-  void tryMoveEdgeOnExit(Offset pos) => handleMouse(
-        {
-          'buttons': 0,
-          'type': _kMouseEventMove,
-        },
-        pos,
-        onExit: true,
-      );
+      },
+      pos,
+      onExit: true,
+    );
+  }
 
   static double tryGetNearestRange(double v, double min, double max, double n) {
     if (v < min && v >= min - n) {
