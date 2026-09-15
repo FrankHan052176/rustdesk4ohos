@@ -94,6 +94,10 @@ jobs:
             # do not silently break the bridge-only compatibility override.
             sed -i -E -e 's/^([[:space:]]*extended_text:).*/\1 13.0.0/' flutter/pubspec.yaml
             grep -qE '^[[:space:]]*extended_text:[[:space:]]*13\.0\.0[[:space:]]*$' flutter/pubspec.yaml
+            # google_fonts 8.x requires Dart >= 3.7, which Flutter 3.22.3 does not ship; the
+            # bridge only needs the crate to resolve, so pin it back to the version upstream uses.
+            sed -i -E -e 's/^([[:space:]]*google_fonts:).*/\1 ^6.2.1/' flutter/pubspec.yaml
+            grep -qE '^[[:space:]]*google_fonts:[[:space:]]*\^6\.2\.1[[:space:]]*$' flutter/pubspec.yaml
           else
             # Flutter 3.44 bridge for Windows arm64: match that build's source/pubspec state so the
             # generated *.freezed.dart compiles against the same Flutter/freezed it resolves.

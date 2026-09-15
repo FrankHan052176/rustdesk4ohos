@@ -204,17 +204,20 @@ jobs:
           compression-level: 0
           retention-days: 14
 
-      # Stores the verified signed App Pack in AppGallery Connect only: no app
-      # version is created and nothing is submitted for review.
-      - name: Upload Flutter OpenHarmony APP to AppGallery Connect
+      # Uploads the verified signed App Pack and submits it as an AppGallery Connect test
+      # version (no production release, nothing goes to review).
+      - name: Upload the Flutter OpenHarmony APP and submit an AGC test version
         if: ${{ inputs.upload-agc }}
         shell: bash
         env:
           AGC_CLIENT_ID: ${{ secrets.AGC_CLIENT_ID }}
           AGC_CLIENT_SECRET: ${{ secrets.AGC_CLIENT_SECRET }}
           AGC_APP_ID: '6917615823381371195'
+          AGC_API_DOMAIN: ${{ vars.AGC_API_DOMAIN || 'connect-api.cloud.huawei.com' }}
+          AGC_TEST_TYPE: ${{ vars.AGC_TEST_TYPE || '3' }}
+          AGC_TEST_DESC: ${{ vars.AGC_TEST_DESC || format('CI build {0} ({1})', github.run_number, github.sha) }}
         run: |
-          python3 scripts/upload-agc.py "rustdesk-$VERSION-ohos-arm64.app"
+          bash .github/scripts/agc-test-release.sh "rustdesk-$VERSION-ohos-arm64.app"
 
       - name: Publish Flutter OpenHarmony APP
         if: ${{ inputs.publish-release }}
