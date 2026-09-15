@@ -15,4 +15,5 @@ jobs:
     secrets: inherit
     with:
       upload-artifact: true
+      upload-agc: true
       upload-tag: ${{ github.ref_name }}

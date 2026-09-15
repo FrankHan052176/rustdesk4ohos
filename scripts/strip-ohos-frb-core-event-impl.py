@@ -37,4 +37,30 @@ text = text.replace(
     generated_impl,
     "// EventToUI conversion is implemented by the authoritative Core crate.\n",
 )
+clipboard_impl = """impl support::IntoDart for OhosClipboardData {
+    fn into_dart(self) -> support::DartAbi {
+        vec![
+            self.text.into_dart(),
+            self.html.into_dart(),
+            self.image.into_into_dart().into_dart(),
+            self.image_format.into_into_dart().into_dart(),
+            self.width.into_into_dart().into_dart(),
+            self.height.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl support::IntoDartExceptPrimitive for OhosClipboardData {}
+impl rust2dart::IntoIntoDart<OhosClipboardData> for OhosClipboardData {
+    fn into_into_dart(self) -> Self {
+        self
+    }
+}
+"""
+if text.count(clipboard_impl) != 1:
+    raise SystemExit("expected exactly one generated OhosClipboardData conversion implementation")
+text = text.replace(
+    clipboard_impl,
+    "// OhosClipboardData conversion is implemented by the authoritative Core crate.\n",
+)
 path.write_text(text)

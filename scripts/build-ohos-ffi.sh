@@ -159,6 +159,9 @@ for symbol in \
   wire_main_set_ohos_host_clipboard_enabled \
   wire_main_update_ohos_host_clipboard_text \
   wire_main_take_ohos_host_clipboard_text \
+  wire_main_ohos_client_clipboard_required \
+  wire_main_update_ohos_client_clipboard_text \
+  wire_main_take_ohos_client_clipboard_text \
   wire_main_start_ohos_host \
   wire_main_stop_ohos_host \
   wire_main_ohos_host_is_started \

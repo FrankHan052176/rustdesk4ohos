@@ -141,6 +141,13 @@ MISSING_BINDINGS = {
 """,
 }
 
+for source, destination in (
+    ("wire_main_take_ohos_host_clipboard_text", "wire_main_ohos_client_clipboard_required"),
+    ("wire_main_update_ohos_host_clipboard_text", "wire_main_update_ohos_client_clipboard_text"),
+    ("wire_main_take_ohos_host_clipboard_text", "wire_main_take_ohos_client_clipboard_text"),
+):
+    MISSING_BINDINGS[destination] = MISSING_BINDINGS[source].replace(source, destination)
+
 
 FRB_RUNTIME_BINDINGS = """
   int init_frb_dart_api_dl(ffi.Pointer<ffi.Void> data) {
