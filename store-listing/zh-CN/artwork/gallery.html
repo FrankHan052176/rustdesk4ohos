@@ -1,0 +1,404 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RustDesk Flutter · 商店宣传图与图标</title>
+  <meta name="description" content="RustDesk Flutter 鸿蒙客户端的商店宣传图与图标交付页：手机竖屏 1080 × 1920、平板 1920 × 1280、横屏 1920 × 1080 各 3 张，另有原生 1024 × 1024 应用图标。">
+  <link rel="icon" href="data:,">
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #10151d;
+      --paper: #ffffff;
+      --warm: #f7f6f3;
+      --accent: #0071ff;
+      --accent-strong: #0060d0;
+      --accent-on-dark: #4da3ff;
+      --line: #e3e2dd;
+      --muted: #5c6672;
+      --sans: "PingFang SC", "Helvetica Neue", "Noto Sans SC", "Microsoft YaHei", system-ui, -apple-system, "Segoe UI", sans-serif;
+      --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    }
+    * { box-sizing: border-box; }
+    html { -webkit-text-size-adjust: 100%; }
+    body {
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: var(--sans);
+      font-size: 16px;
+      line-height: 1.62;
+    }
+    img { max-width: 100%; }
+    h1, h2, p, ul { margin: 0; }
+    a { color: var(--accent-strong); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+    a:hover { color: var(--accent); }
+    a:focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 3px; border-radius: 3px; }
+    .masthead a:focus-visible { outline-color: var(--accent-on-dark); }
+    code { font-family: var(--mono); font-size: .92em; }
+
+    .skip-link {
+      position: absolute;
+      top: 0;
+      left: -9999px;
+      z-index: 9;
+      display: inline-flex;
+      align-items: center;
+      min-height: 44px;
+      padding: 0 18px;
+      background: var(--ink);
+      color: #ffffff;
+      text-decoration: none;
+    }
+    .skip-link:focus { left: 12px; color: #ffffff; }
+
+    .masthead { background: var(--ink); color: #f4f5f7; }
+    .masthead-inner {
+      max-width: 1240px;
+      margin: 0 auto;
+      padding: 22px 32px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px 40px;
+    }
+    .brand { display: flex; align-items: center; gap: 14px; min-width: 0; }
+    .brand-mark { display: block; width: 30px; height: 30px; flex: 0 0 auto; }
+    h1 { font-size: 21px; font-weight: 650; letter-spacing: -.012em; line-height: 1.25; }
+    .brand-sub { margin-top: 3px; font-size: 13px; line-height: 1.4; color: #99a3b1; }
+    .masthead-nav { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+    .masthead-nav a {
+      display: inline-flex;
+      align-items: center;
+      min-height: 44px;
+      padding: 0 12px;
+      color: #d6dce5;
+      font-size: 14.5px;
+      text-decoration: none;
+      border: 1px solid transparent;
+      border-radius: 6px;
+    }
+    .masthead-nav a:hover { color: #ffffff; background: #1b2230; }
+    .masthead-nav .cta {
+      gap: 9px;
+      padding: 0 18px;
+      margin-left: 6px;
+      background: var(--accent-strong);
+      border-color: var(--accent-strong);
+      color: #ffffff;
+      font-weight: 600;
+      letter-spacing: -.005em;
+    }
+    .masthead-nav .cta:hover { background: var(--accent); border-color: var(--accent); color: #ffffff; }
+    .masthead-nav svg { display: block; width: 16px; height: 16px; flex: 0 0 auto; }
+
+    main { max-width: 1240px; margin: 0 auto; padding: 0 32px 88px; }
+    .lede { padding-top: 46px; max-width: 62ch; }
+    .lede-title { font-size: 27px; font-weight: 650; letter-spacing: -.022em; line-height: 1.32; }
+    .lede p { margin-top: 14px; color: var(--muted); }
+    .lede-links { display: flex; flex-wrap: wrap; gap: 4px 8px; margin-top: 8px; }
+    .lede-links a {
+      display: inline-flex;
+      align-items: center;
+      min-height: 44px;
+      padding: 0 10px;
+      font-size: 14.5px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      text-decoration: none;
+      color: var(--accent-strong);
+    }
+    .lede-links a:hover { border-color: var(--accent); color: var(--accent); }
+
+    .group { margin-top: 76px; padding-top: 30px; border-top: 1px solid var(--line); }
+    .group-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; }
+    h2 { font-size: 20px; font-weight: 650; letter-spacing: -.012em; }
+    .dim {
+      font-family: var(--mono);
+      font-size: 14px;
+      font-weight: 400;
+      letter-spacing: .01em;
+      color: var(--accent-strong);
+      font-variant-numeric: tabular-nums;
+    }
+    .group-note { margin-top: 10px; font-size: 14.5px; color: var(--muted); max-width: 70ch; }
+
+    .posters {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 24px;
+      margin-top: 26px;
+    }
+    figure { margin: 0; display: flex; flex-direction: column; gap: 13px; min-width: 0; }
+    .shot {
+      display: block;
+      background: var(--warm);
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      overflow: hidden;
+    }
+    .shot img { display: block; width: 100%; height: auto; }
+    #phone .shot img { aspect-ratio: 1080 / 1920; }
+    #tablet .shot img { aspect-ratio: 1920 / 1280; }
+    #landscape .shot img { aspect-ratio: 1920 / 1080; }
+    .shot-caption { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+    .shot-title { font-size: 15.5px; font-weight: 600; letter-spacing: -.008em; }
+    .shot-meta {
+      font-family: var(--mono);
+      font-size: 12.5px;
+      line-height: 1.5;
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+      overflow-wrap: anywhere;
+    }
+
+    .icon-row {
+      display: grid;
+      grid-template-columns: minmax(0, 360px) minmax(0, 1fr);
+      gap: 34px;
+      align-items: start;
+      margin-top: 26px;
+    }
+    .icon-figure { max-width: 360px; }
+    .icon-figure .shot img { aspect-ratio: 1 / 1; }
+    .icon-notes { padding-top: 4px; }
+    .icon-notes p { color: var(--muted); }
+    .icon-notes p + p { margin-top: 14px; }
+    .icon-notes strong { color: var(--ink); font-weight: 600; }
+
+    .colophon {
+      margin-top: 76px;
+      padding: 32px;
+      background: var(--warm);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+    }
+    .colophon ul { margin-top: 18px; padding-left: 20px; color: var(--muted); max-width: 74ch; }
+    .colophon li { margin-top: 10px; }
+    .colophon li:first-child { margin-top: 0; }
+    .doc-link { margin-top: 22px; }
+    .doc-link a {
+      display: inline-flex;
+      align-items: center;
+      min-height: 44px;
+      padding: 0 12px;
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      font-size: 14.5px;
+      text-decoration: none;
+    }
+    .doc-link a:hover { border-color: var(--accent); }
+
+    @media (max-width: 900px) {
+      .posters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .icon-row { grid-template-columns: minmax(0, 1fr); }
+      .icon-figure { max-width: 320px; }
+    }
+    @media (max-width: 620px) {
+      .masthead-inner { padding: 18px 20px; }
+      main { padding: 0 20px 64px; }
+      .lede { padding-top: 34px; }
+      .lede-title { font-size: 23px; }
+      .posters { grid-template-columns: minmax(0, 1fr); gap: 28px; }
+      .group { margin-top: 56px; }
+      .colophon { padding: 22px 20px; }
+      .masthead-nav { width: 100%; gap: 4px 6px; }
+      .masthead-nav a { padding: 0 10px; }
+      .masthead-nav .cta { margin-left: 0; }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#content">跳到主要内容</a>
+
+  <header class="masthead">
+    <div class="masthead-inner">
+      <div class="brand">
+        <img class="brand-mark" src="assets/rustdesk-logo.svg" alt="" width="26" height="26">
+        <div>
+          <h1>RustDesk Flutter</h1>
+          <p class="brand-sub">鸿蒙远程桌面客户端 · 商店宣传素材</p>
+        </div>
+      </div>
+      <nav class="masthead-nav" aria-label="分区导航与下载">
+        <a href="#icon">应用图标</a>
+        <a href="#phone">1080 × 1920</a>
+        <a href="#tablet">1920 × 1280</a>
+        <a href="#landscape">1920 × 1080</a>
+        <a class="cta" href="../rustdesk-store-assets.zip" download>
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 1.8v8.4"/><path d="M4.6 7l3.4 3.4L11.4 7"/><path d="M2.2 12.8h11.6"/></svg>
+          下载全部素材（ZIP）
+        </a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="content">
+    <section class="lede" aria-labelledby="lede-title">
+      <h2 class="lede-title" id="lede-title">九张宣传图，三种画布尺寸</h2>
+      <p>手机竖屏、平板与横屏各 3 张，另附原生 1024 × 1024 应用图标。点击任意缩略图可查看原尺寸 PNG。</p>
+      <nav class="lede-links" aria-label="说明文档">
+        <a href="../description.txt" download>应用介绍 description.txt</a>
+        <a href="../tagline.txt" download>一句话介绍 tagline.txt</a>
+        <a href="sources.json">截图来源 sources.json</a>
+      </nav>
+    </section>
+
+    <section class="group" id="icon" aria-labelledby="icon-h">
+      <div class="group-head">
+        <h2 id="icon-h">应用图标 <span class="dim">1024 × 1024</span></h2>
+      </div>
+      <div class="icon-row">
+        <figure class="icon-figure">
+          <a class="shot" href="exports/app-icon-1024.png">
+            <img src="exports/app-icon-1024.png" alt="RustDesk 应用图标：仓库原始 res/icon.png 的 1024 × 1024 版本" width="1024" height="1024">
+          </a>
+          <div class="shot-caption">
+            <span class="shot-title">RustDesk 官方图标</span>
+            <span class="shot-meta">1024 × 1024 · exports/app-icon-1024.png</span>
+          </div>
+        </figure>
+        <div class="icon-notes">
+          <p>图标取自仓库原始 <code>res/icon.png</code>，按原生 <strong>1024 × 1024</strong> 提供，不是系统默认的鸿蒙图标。</p>
+          <p>同一图源另存为 <a href="assets/app-icon.png">assets/app-icon.png</a>，供海报渲染直接引用。</p>
+          <p>品牌标识使用 <a href="assets/rustdesk-logo.svg">assets/rustdesk-logo.svg</a>，内容等同仓库原始 <code>res/logo.svg</code>。</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="group" id="phone" aria-labelledby="phone-h">
+      <div class="group-head">
+        <h2 id="phone-h">手机竖屏 <span class="dim">1080 × 1920</span></h2>
+      </div>
+      <p class="group-note">竖版画布，用于应用商店手机截图位。</p>
+      <div class="posters">
+        <figure>
+          <a class="shot" href="exports/phone-quality.png">
+            <img src="exports/phone-quality.png" alt="上游 RustDesk 客户端的显示器选择与图像质量设置面板" width="1080" height="1920">
+          </a>
+          <div class="shot-caption">
+            <span class="shot-title">画质，随你掌控。</span>
+            <span class="shot-meta">1080 × 1920 · exports/phone-quality.png</span>
+          </div>
+        </figure>
+        <figure>
+          <a class="shot" href="exports/phone-keyboard.png">
+            <img src="exports/phone-keyboard.png" alt="上游 RustDesk 客户端的屏幕键盘、修饰键与复制粘贴快捷键" width="1080" height="1920">
+          </a>
+          <div class="shot-caption">
+            <span class="shot-title">远程输入，得心应手。</span>
+            <span class="shot-meta">1080 × 1920 · exports/phone-keyboard.png</span>
+          </div>
+        </figure>
+        <figure>
+          <a class="shot" href="exports/phone-pointer.png">
+            <img src="exports/phone-pointer.png" alt="上游 RustDesk 客户端的拖动、滚动、右键与修饰键工具栏" width="1080" height="1920">
+          </a>
+          <div class="shot-caption">
+            <span class="shot-title">点按之间，掌控远端。</span>
+            <span class="shot-meta">1080 × 1920 · exports/phone-pointer.png</span>
+          </div>
+        </figure>
+      </div>
+    </section>
+
+    <section class="group" id="tablet" aria-labelledby="tablet-h">
+      <div class="group-head">
+        <h2 id="tablet-h">平板 <span class="dim">1920 × 1280</span></h2>
+      </div>
+      <p class="group-note">横版画布，用于应用商店平板截图位。</p>
+      <div class="posters">
+        <figure>
+          <a class="shot" href="exports/tablet-quality.png">
+            <img src="exports/tablet-quality.png" alt="上游 RustDesk 客户端的显示器选择与图像质量设置面板" width="1920" height="1280">
+          </a>
+          <div class="shot-caption">
+            <span class="shot-title">画质，随你掌控。</span>
+            <span class="shot-meta">1920 × 1280 · exports/tablet-quality.png</span>
+          </div>
+        </figure>
+        <figure>
+          <a class="shot" href="exports/tablet-keyboard.png">
+            <img src="exports/tablet-keyboard.png" alt="上游 RustDesk 客户端的屏幕键盘、修饰键与复制粘贴快捷键" width="1920" height="1280">
+          </a>
+          <div class="shot-caption">
+            <span class="shot-title">远程输入，得心应手。</span>
+            <span class="shot-meta">1920 × 1280 · exports/tablet-keyboard.png</span>
+          </div>
+        </figure>
+        <figure>
+          <a class="shot" href="exports/tablet-pointer.png">
+            <img src="exports/tablet-pointer.png" alt="上游 RustDesk 客户端的拖动、滚动、右键与修饰键工具栏" width="1920" height="1280">
+          </a>
+          <div class="shot-caption">
+            <span class="shot-title">点按之间，掌控远端。</span>
+            <span class="shot-meta">1920 × 1280 · exports/tablet-pointer.png</span>
+          </div>
+        </figure>
+      </div>
+    </section>
+
+    <section class="group" id="landscape" aria-labelledby="landscape-h">
+      <div class="group-head">
+        <h2 id="landscape-h">横屏 <span class="dim">1920 × 1080</span></h2>
+      </div>
+      <p class="group-note">宽幅画布，用于横屏或桌面类展示位。</p>
+      <div class="posters">
+        <figure>
+          <a class="shot" href="exports/landscape-quality.png">
+            <img src="exports/landscape-quality.png" alt="上游 RustDesk 客户端的显示器选择与图像质量设置面板" width="1920" height="1080">
+          </a>
+          <div class="shot-caption">
+            <span class="shot-title">画质，随你掌控。</span>
+            <span class="shot-meta">1920 × 1080 · exports/landscape-quality.png</span>
+          </div>
+        </figure>
+        <figure>
+          <a class="shot" href="exports/landscape-keyboard.png">
+            <img src="exports/landscape-keyboard.png" alt="上游 RustDesk 客户端的屏幕键盘、修饰键与复制粘贴快捷键" width="1920" height="1080">
+          </a>
+          <div class="shot-caption">
+            <span class="shot-title">远程输入，得心应手。</span>
+            <span class="shot-meta">1920 × 1080 · exports/landscape-keyboard.png</span>
+          </div>
+        </figure>
+        <figure>
+          <a class="shot" href="exports/landscape-pointer.png">
+            <img src="exports/landscape-pointer.png" alt="上游 RustDesk 客户端的拖动、滚动、右键与修饰键工具栏" width="1920" height="1080">
+          </a>
+          <div class="shot-caption">
+            <span class="shot-title">点按之间，掌控远端。</span>
+            <span class="shot-meta">1920 × 1080 · exports/landscape-pointer.png</span>
+          </div>
+        </figure>
+      </div>
+    </section>
+
+    <footer class="colophon" aria-labelledby="notes-h">
+      <h2 id="notes-h">来源与说明</h2>
+      <ul>
+        <li>宣传图中的软件界面来自上游客户端历史截图，不是当前 HarmonyOS 版本的真机截图；本页只做排版，未重绘或改动界面内容。</li>
+        <li>“手机竖屏 / 平板 / 横屏”只表示宣传画的输出像素尺寸，不代表对应设备上的鸿蒙界面。</li>
+        <li>图标使用仓库原始 <code>res/icon.png</code>，按原生 1024 × 1024 提供，不是系统默认的鸿蒙图标。</li>
+        <li>本次只交付宣传素材，未改动应用源码与已安装的 HAP / APK，素材也未上传到 AppGallery Connect。</li>
+      </ul>
+      <p class="doc-link"><a href="sources.json">查看每张图的来源与 SHA-256（sources.json）</a></p>
+    </footer>
+  </main>
+
+  <script>
+    Promise.all([
+      document.fonts.ready,
+      ...Array.from(document.images, image => image.decode())
+    ]).then(() => {
+      document.body.dataset.ready = 'true';
+    }).catch(error => {
+      document.body.dataset.ready = 'error';
+      console.error('Gallery asset failed to load', error);
+    });
+  </script>
+</body>
+</html>

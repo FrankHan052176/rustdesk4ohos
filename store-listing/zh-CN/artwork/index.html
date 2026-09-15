@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RustDesk · 远程桌面</title>
+  <link rel="icon" href="assets/rustdesk-logo.svg">
+  <style>
+    :root { font-family: "PingFang SC", "Microsoft YaHei", sans-serif; color-scheme: light; --paper:#f4f6f8; --ink:#111b2b; --accent:#0069ed; --muted:#4d6077; --line:#ccd6e2; }
+    * { box-sizing:border-box; }
+    html, body { margin:0; width:100%; height:100%; }
+    body { background:var(--paper); color:var(--ink); }
+    body[data-scene="keyboard"] { --paper:#101a2a; --ink:#fff; --accent:#65caff; --muted:#becce0; --line:#3c5069; }
+    body[data-scene="pointer"] { --paper:#0064e6; --ink:#fff; --accent:#beefff; --muted:#e2efff; --line:#699eed; }
+    .poster { width:100vw; height:100vh; position:relative; overflow:hidden; isolation:isolate; }
+    .watermark { position:absolute; width:91vw; height:91vw; right:-23vw; top:27vh; opacity:.055; z-index:-1; }
+    body[data-scene="keyboard"] .watermark, body[data-scene="pointer"] .watermark { filter:brightness(0) invert(1); opacity:.075; }
+    .masthead { position:absolute; left:6.7vw; right:6.7vw; top:3.5vh; display:flex; align-items:center; justify-content:space-between; }
+    .brand { display:flex; align-items:center; gap:1.3vw; font-size:3.7vw; font-weight:650; letter-spacing:-.045em; }
+    .brand img { width:4.3vw; height:4.3vw; }
+    body[data-scene="pointer"] .brand img { filter:brightness(0) invert(1); }
+    .edition { font-size:1.8vw; letter-spacing:.15em; font-weight:500; }
+    .copy { position:absolute; left:6.7vw; right:6.7vw; top:8.8vh; }
+    .eyebrow { margin:0 0 1.15vh; display:flex; align-items:center; gap:1.25vw; color:var(--muted); font-size:1.95vw; letter-spacing:.11em; }
+    .eyebrow b { color:var(--accent); font-weight:600; font-variant-numeric:tabular-nums; }
+    .eyebrow i { width:3.2vw; height:1px; background:var(--line); }
+    h1 { margin:0; font-size:8.7vw; font-weight:650; line-height:1.15; letter-spacing:-.055em; }
+    h1 span { display:block; }
+    h1 .accent { color:var(--accent); }
+    .description { margin:1.5vh 0 0; font-size:2.55vw; line-height:1.7; color:var(--muted); white-space:pre-line; }
+    .features { display:flex; gap:1.5vw; padding:0; margin:1.3vh 0 0; list-style:none; }
+    .features li { font-size:1.8vw; line-height:1.6; color:var(--muted); border-left:2px solid var(--accent); padding-left:1.05vw; }
+    .device-stage { position:absolute; top:30.5vh; bottom:5.2vh; left:6.7vw; right:6.7vw; display:flex; align-items:center; justify-content:center; }
+    .device { height:100%; flex:none; padding:9px; border-radius:26px; background:#172232; box-shadow:0 0 0 1px #657084, 0 34px 56px -22px rgb(5 17 35 / 32%); }
+    .screenshot { height:100%; width:auto; display:block; }
+    .side-label { position:absolute; font-size:1.2vw; font-weight:500; color:var(--muted); letter-spacing:.18em; writing-mode:vertical-rl; left:0; top:50%; transform:translateY(-50%); }
+    footer { position:absolute; bottom:2.5vh; left:6.7vw; right:6.7vw; display:flex; align-items:center; justify-content:space-between; color:var(--muted); font-size:1.5vw; line-height:1.4; }
+    .progress { display:flex; align-items:center; gap:8px; }
+    .progress i { height:3px; width:25px; background:var(--line); }
+    .progress i.active { width:54px; background:var(--accent); }
+    .icon { display:none; }
+    body[data-format="icon"] .poster { display:none; }
+    body[data-format="icon"] .icon { display:block; width:100vw; height:100vh; object-fit:contain; }
+    body:not([data-format="phone"]) .masthead { left:5vw; right:5vw; top:5.5vh; justify-content:flex-start; gap:4vw; }
+    body:not([data-format="phone"]) .brand { gap:.8vw; font-size:2.45vw; }
+    body:not([data-format="phone"]) .brand img { width:2.9vw; height:2.9vw; }
+    body:not([data-format="phone"]) .edition { font-size:1vw; }
+    body:not([data-format="phone"]) .copy { left:5vw; right:auto; width:46vw; top:50%; transform:translateY(-50%); }
+    body:not([data-format="phone"]) .eyebrow { font-size:1.1vw; margin-bottom:2.5vh; gap:.85vw; }
+    body:not([data-format="phone"]) h1 { font-size:5.55vw; line-height:1.24; }
+    body:not([data-format="phone"]) .description { font-size:1.45vw; margin-top:3vh; line-height:1.9; }
+    body:not([data-format="phone"]) .features { margin-top:4.2vh; gap:1.9vw; }
+    body:not([data-format="phone"]) .features li { font-size:1.05vw; padding-left:.8vw; }
+    body:not([data-format="phone"]) .device-stage { top:7.8vh; bottom:7.8vh; left:54vw; right:6vw; }
+    body:not([data-format="phone"]) .device { padding:12px; border-radius:30px; }
+    body:not([data-format="phone"]) .screenshot { border-radius:0; }
+    body:not([data-format="phone"]) .side-label { display:none; }
+    body:not([data-format="phone"]) .watermark { top:0; right:-10vw; width:79vw; height:79vw; }
+    body:not([data-format="phone"]) footer { left:5vw; right:5vw; bottom:3.8vh; font-size:.9vw; }
+    body[data-format="tablet"] .device-stage { top:10.6vh; bottom:10.6vh; left:53vw; right:5vw; }
+    body[data-format="tablet"] .copy { top:48%; }
+    body[data-format="tablet"] h1 { font-size:5.35vw; }
+    body[data-format="tablet"] .edition { margin-right:0; }
+  </style>
+</head>
+<body>
+  <main class="poster">
+    <img class="watermark" src="assets/rustdesk-logo.svg" alt="">
+    <header class="masthead">
+      <div class="brand"><img src="assets/rustdesk-logo.svg" alt="">RustDesk</div>
+      <span class="edition">远程桌面，自在掌控</span>
+    </header>
+    <section class="copy" aria-label="功能介绍">
+      <p class="eyebrow"><b id="number"></b><i></i><span id="label"></span></p>
+      <h1><span id="headline"></span><span class="accent" id="highlight"></span></h1>
+      <p class="description" id="description"></p>
+      <ul class="features" id="features" aria-label="功能要点"></ul>
+    </section>
+    <div class="device-stage">
+      <span class="side-label">YOUR DESKTOP. ANYWHERE.</span>
+      <div class="device"><img class="screenshot" id="screenshot" alt=""></div>
+    </div>
+    <footer><span>RustDesk Flutter · 上游客户端界面示例</span><span class="progress" aria-hidden="true"><i></i><i></i><i></i></span></footer>
+  </main>
+  <img class="icon" id="icon" alt="RustDesk 原始应用图标">
+  <script>
+    const scenes = {
+      quality: { index:'01', label:'显示与画质', headline:'画质，', highlight:'随你掌控。', description:'清晰画面，还是更快响应？\n按你的需要，切换显示偏好。', features:['画质选择', '响应优先', '显示器切换'], alt:'上游 RustDesk 客户端真实截图：图像质量、响应偏好和显示器选择' },
+      keyboard: { index:'02', label:'远程键盘', headline:'远程输入，', highlight:'得心应手。', description:'从常用按键，到熟悉的组合键。\n让屏幕另一端，也好操作。', features:['修饰键', '快捷组合', '屏幕键盘'], alt:'上游 RustDesk 客户端真实截图：屏幕键盘和 Ctrl、Alt、Shift 等修饰键，远端为测试账户' },
+      pointer: { index:'03', label:'指针与触控', headline:'点按之间，', highlight:'掌控远端。', description:'点击、拖动、滚动。\n把熟悉的桌面操作，带到手边。', features:['点击', '拖动', '滚动'], alt:'上游 RustDesk 客户端真实截图：指针工具栏，远端显示公开 RustDesk 仓库页面' }
+    };
+    const formats = { phone:[1080,1920], tablet:[1920,1280], landscape:[1920,1080], icon:[1024,1024] };
+    const params = new URLSearchParams(location.search);
+    const scene = Object.hasOwn(scenes,params.get('scene')) ? params.get('scene') : 'quality';
+    const fallback = innerWidth < innerHeight ? 'phone' : innerWidth/innerHeight < 1.65 ? 'tablet' : 'landscape';
+    const format = Object.hasOwn(formats,params.get('format')) ? params.get('format') : fallback;
+    const data = scenes[scene];
+    document.body.dataset.scene = scene;
+    document.body.dataset.format = format;
+    document.body.dataset.exportSize = formats[format].join('x');
+    document.title = `RustDesk · ${format==='icon'?'原始应用图标':data.label}`;
+    const activeImages = [...document.querySelectorAll('.watermark, .brand img')];
+    if (format==='icon') {
+      const icon = document.getElementById('icon');
+      icon.src = 'assets/app-icon.png';
+      activeImages.push(icon);
+    } else {
+      document.getElementById('number').textContent = data.index;
+      document.getElementById('label').textContent = data.label;
+      document.getElementById('headline').textContent = data.headline;
+      document.getElementById('highlight').textContent = data.highlight;
+      document.getElementById('description').textContent = format==='phone' ? data.description.replace('\n','') : data.description;
+      for (const feature of data.features) {
+        const item = document.createElement('li');
+        item.textContent = feature;
+        document.getElementById('features').append(item);
+      }
+      document.querySelectorAll('.progress i')[Number(data.index)-1].classList.add('active');
+      const screenshot = document.getElementById('screenshot');
+      screenshot.src = `assets/${format==='phone'?'phone':'tablet'}-${scene}.png`;
+      screenshot.alt = data.alt;
+      activeImages.push(screenshot);
+    }
+    Promise.all([document.fonts.ready,...activeImages.map(image=>image.decode())]).then(()=>{
+      document.body.dataset.ready='true';
+    }).catch(error=>{
+      document.body.dataset.ready='error';
+      console.error('Poster asset failed to load',error);
+    });
+  </script>
+</body>
+</html>
