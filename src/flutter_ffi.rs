@@ -1023,7 +1023,7 @@ pub fn main_set_option(key: String, value: String) {
         );
     }
     #[cfg(target_env = "ohos")]
-    if key.eq(config::keys::OPTION_ENABLE_AUDIO) {
+    if key.eq(base::config::keys::OPTION_ENABLE_AUDIO) {
         crate::ui_cm_interface::switch_permission_all(
             "audio".to_owned(),
             config::option2bool(&key, &value),
@@ -1834,7 +1834,7 @@ pub fn main_set_ohos_host_clipboard_enabled(enabled: bool) {
         crate::platform::ohos::set_host_clipboard_available(enabled);
         crate::ui_cm_interface::switch_permission_all(
             "clipboard".to_owned(),
-            enabled && config::Config::get_bool_option(config::keys::OPTION_ENABLE_CLIPBOARD),
+            enabled && config::Config::get_bool_option(base::config::keys::OPTION_ENABLE_CLIPBOARD),
         );
     }
     #[cfg(not(target_env = "ohos"))]

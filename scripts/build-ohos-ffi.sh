@@ -81,6 +81,8 @@ frb_args=(
   --skip-deps-check
   --rust-input "$core_root/src/flutter_ffi.rs"
   --rust-crate-dir "$core_root"
+  # The vendored third_party crate keeps the generator from guessing; name it explicitly.
+  --class-name Rustdesk
   --rust-output "$core_rust_output"
   --dart-output "$dart_output"
   --skip-add-mod-to-lib

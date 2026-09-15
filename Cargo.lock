@@ -5040,7 +5040,6 @@ dependencies = [
  "cfg-if 1.0.0",
  "libc",
  "memoffset 0.7.1",
- "pin-utils",
 ]
 
 [[package]]
@@ -9807,7 +9806,7 @@ dependencies = [
 [[package]]
 name = "webrtc-util"
 version = "0.11.0"
-source = "git+https://github.com/rustdesk-org/webrtc?rev=db3b07a9dd8f195916c89c2e62a8911402b11d27#db3b07a9dd8f195916c89c2e62a8911402b11d27"
+source = "git+https://github.com/FrankHan052176/webrtc?rev=edaa66a963d65ce8d5b087c43716a1fd1701d102#edaa66a963d65ce8d5b087c43716a1fd1701d102"
 dependencies = [
  "async-trait",
  "bitflags 1.3.2",

@@ -58,9 +58,8 @@ screencapturekit = ["cpal/screencapturekit"]
 [dependencies]
 async-trait = "0.1"
 scrap = { path = "libs/scrap", features = ["wayland"] }
-# WebRTC transport stays off for this fork: its dtls/webrtc-util stack pulls nix 0.26,
-# whose SigEvent::new matches no arm for target_env = "ohos".
-hbb_common = { path = "libs/hbb_common" }
+# WebRTC is on for every target; the nix patch below covers target_env = "ohos".
+hbb_common = { path = "libs/hbb_common", features = ["webrtc"] }
 base = { path = "libs/base" }
 serde_derive = "1.0"
 serde = "1.0"
@@ -101,6 +100,7 @@ clipboard = { path = "libs/clipboard" }
 zstd = "0.13"
 
 [target.'cfg(not(target_env = "ohos"))'.dependencies]
+hbb_common = { path = "libs/hbb_common", features = ["webrtc"] }
 reqwest = { version = "0.12", features = ["blocking", "socks", "json", "native-tls", "rustls-tls", "rustls-tls-native-roots", "gzip", "zstd"], default-features=false }
 rdev = { git = "https://github.com/rustdesk-org/rdev" }
 
@@ -232,6 +232,7 @@ exclude = ["vdi/host"]
 # Patch libxdo-sys to use a stub implementation that doesn't require libxdo
 # This allows building and running on systems without libxdo installed (e.g., Wayland-only)
 [patch.crates-io]
+webrtc-util = { git = "https://github.com/FrankHan052176/webrtc", rev = "edaa66a963d65ce8d5b087c43716a1fd1701d102" }
 libxdo-sys = { path = "libs/libxdo-sys-stub" }
 libsodium-sys = { git = "https://github.com/FrankHan052176/sodiumoxide", rev = "a09de89d843f88a7bfccd80266150fe5d33e1eee" }
 # One branch off upstream v0.13.0, the tag whose crate versions match this stack.
@@ -248,7 +249,6 @@ libsodium-sys = { git = "https://github.com/FrankHan052176/sodiumoxide", rev = "
 # the SACK settle the rest (F-RTO), timed from the latest send, so a stall no longer resends the
 # whole backlog behind itself while a short lost tail still comes back at once.
 # Pinned by rev, not branch: a fork branch can be rewritten out from under the lockfile.
-webrtc-util = { git = "https://github.com/rustdesk-org/webrtc", rev = "db3b07a9dd8f195916c89c2e62a8911402b11d27" }
 webrtc-sctp = { git = "https://github.com/rustdesk-org/webrtc", rev = "db3b07a9dd8f195916c89c2e62a8911402b11d27" }
 
 [package.metadata.winres]
@@ -263,7 +263,7 @@ winapi = { version = "0.3", features = [ "winnt", "pdh", "synchapi" ] }
 
 [build-dependencies]
 cc = "1.0"
-hbb_common = { path = "libs/hbb_common" }
+hbb_common = { path = "libs/hbb_common", features = ["webrtc"] }
 os-version = "0.2"
 
 [dev-dependencies]
@@ -288,3 +288,8 @@ rpath = true
 
 [profile.dev]
 debug = 1
+
+[patch."https://github.com/rustdesk-org/webrtc"]
+# The pinned rev pulls nix with its glibc-only default features, which cannot build for
+# target_env = ohos; the fork keeps the same version without them.
+webrtc-util = { git = "https://github.com/FrankHan052176/webrtc", rev = "edaa66a963d65ce8d5b087c43716a1fd1701d102" }
