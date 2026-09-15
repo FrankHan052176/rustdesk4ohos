@@ -39,7 +39,7 @@ use hbb_common::anyhow;
 use hbb_common::{
     allow_err, bail, bytes,
     bytes_codec::BytesCodec,
-    config::{self, keys::OPTION_ALLOW_WEBSOCKET, Config, Config2},
+    config::{self, Config, Config2},
     futures::StreamExt as _,
     futures_util::sink::SinkExt,
     log, password_security as password, timeout,
@@ -52,6 +52,7 @@ use hbb_common::{
 };
 #[cfg(target_os = "macos")]
 use ipc_auth::authorize_user_server_process;
+use base::config::keys::{self, OPTION_ALLOW_WEBSOCKET};
 #[cfg(windows)]
 pub(crate) use ipc_auth::authorize_windows_portable_service_ipc_connection;
 #[cfg(windows)]
@@ -808,9 +809,9 @@ impl CheckIfRestart {
             audio_input: Config::get_option("audio-input"),
             voice_call_input: Config::get_option("voice-call-input"),
             ws: Config::get_option(OPTION_ALLOW_WEBSOCKET),
-            disable_udp: Config::get_option(config::keys::OPTION_DISABLE_UDP),
+            disable_udp: Config::get_option(keys::OPTION_DISABLE_UDP),
             allow_insecure_tls_fallback: Config::get_option(
-                config::keys::OPTION_ALLOW_INSECURE_TLS_FALLBACK,
+                keys::OPTION_ALLOW_INSECURE_TLS_FALLBACK,
             ),
             api_server: Config::get_option("api-server"),
         }
@@ -823,12 +824,12 @@ impl Drop for CheckIfRestart {
         // No need to check if https proxy is used, because this option does not change frequently
         // and restarting mediator is safe even https proxy is not used.
         let allow_insecure_tls_fallback_changed = self.allow_insecure_tls_fallback
-            != Config::get_option(config::keys::OPTION_ALLOW_INSECURE_TLS_FALLBACK);
+            != Config::get_option(keys::OPTION_ALLOW_INSECURE_TLS_FALLBACK);
         if allow_insecure_tls_fallback_changed
             || self.stop_service != Config::get_option("stop-service")
             || self.rendezvous_servers != Config::get_rendezvous_servers()
             || self.ws != Config::get_option(OPTION_ALLOW_WEBSOCKET)
-            || self.disable_udp != Config::get_option(config::keys::OPTION_DISABLE_UDP)
+            || self.disable_udp != Config::get_option(keys::OPTION_DISABLE_UDP)
             || self.api_server != Config::get_option("api-server")
         {
             if allow_insecure_tls_fallback_changed {
@@ -1097,7 +1098,7 @@ async fn handle(data: Data, stream: &mut Connection) {
             allow_err!(
                 stream
                     .send(&Data::SyncWinCpuUsage(
-                        hbb_common::platform::windows::cpu_uage_one_minute()
+                        base::platform::windows::cpu_uage_one_minute()
                     ))
                     .await
             );
@@ -1289,7 +1290,7 @@ async fn handle(data: Data, stream: &mut Connection) {
             let state = crate::server::get_control_permission_state(Permission::file, false);
             let enabled = state.unwrap_or_else(|| {
                 crate::server::Connection::is_permission_enabled_locally(
-                    config::keys::OPTION_ENABLE_FILE_TRANSFER,
+                    keys::OPTION_ENABLE_FILE_TRANSFER,
                 )
             });
             allow_err!(
@@ -1576,7 +1577,13 @@ pub async fn start_pa() {
                                 None, // Use default buffering attributes
                             ) {
                                 Ok(s) => loop {
-                                    if let Ok(_) = s.read(&mut buf) {
+                                    // A dead pulse handle fails every read at once, so ignoring the
+                                    // error left nothing pacing this loop and it burned a core.
+                                    if let Err(err) = s.read(&mut buf) {
+                                        log::error!("Failed to read audio data:{}", err);
+                                        break;
+                                    }
+                                    {
                                         let out =
                                             if buf.iter().filter(|x| **x != 0).next().is_none() {
                                                 vec![]

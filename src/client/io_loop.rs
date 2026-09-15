@@ -18,6 +18,16 @@ use crate::{
 // Restart msgbox text is kept as a legacy UI fallback; Flutter handles the type as a control event.
 const RESTART_REMOTE_DEVICE_NO_DATA_TIMEOUT: Duration = Duration::from_secs(5);
 const KCP_CLOSE_REASON_FLUSH_DELAY: Duration = Duration::from_millis(30);
+// Deadline for the parting close-reason send once the peer is presumed gone; KCP waits for send
+// capacity with no deadline of its own.
+const KCP_CLOSE_REASON_GONE_DEADLINE: Duration = Duration::from_millis(500);
+// Grace after ICE reports Disconnected, which it does ~5s after it stops hearing from the peer,
+// for ~8s in total. Disconnected is transient by design, so this waits out a Wi-Fi roam or a
+// sleep/wake rather than acting on the first hint.
+const WEBRTC_SUSPECT_GRACE: Duration = Duration::from_secs(3);
+// KCP gets no such hint, only how long since a packet arrived; its endpoint pings an idle peer
+// about every 2s, so this is several missed pings, and matches the 8s WebRTC arrives at.
+const KCP_PEER_SILENCE_LIMIT: Duration = Duration::from_secs(8);
 #[cfg(feature = "unix-file-copy-paste")]
 use crate::clipboard::try_empty_clipboard_files;
 #[cfg(all(target_env = "ohos", feature = "cliprdr-file-service"))]
@@ -27,6 +37,14 @@ use crate::clipboard::ClipboardSide;
     all(not(target_os = "windows"), feature = "cliprdr-file-service")
 ))]
 use crate::clipboard_file::unix_file_clip;
+use base::{
+    config::keys,
+    fs::{
+        self, can_enable_overwrite_detection, get_job, get_string, new_send_confirm,
+        DigestCheckResult, RemoveJobMeta,
+    },
+    message_proto::{permission_info::Permission, *},
+};
 #[cfg(any(
     target_os = "windows",
     all(target_os = "macos", feature = "unix-file-copy-paste")
@@ -38,12 +56,7 @@ use hbb_common::tokio::sync::mpsc::error::TryRecvError;
 use hbb_common::{
     allow_err,
     config::{self, LocalConfig, PeerConfig, TransferSerde},
-    fs::{
-        self, can_enable_overwrite_detection, get_job, get_string, new_send_confirm,
-        DigestCheckResult, RemoveJobMeta,
-    },
     get_time, log,
-    message_proto::{permission_info::Permission, *},
     protobuf::Message as _,
     rendezvous_proto::ConnType,
     timeout,
@@ -217,6 +230,14 @@ impl<T: InvokeUiSession> Remote<T> {
                     .unwrap()
                     .set_connected();
                 let is_secured = peer.is_secured();
+                // Only WebRTC needs refining: its label names the transport that won the race,
+                // not the family ICE ended up nominating, and it is the one path where the two
+                // can disagree with the address the rendezvous observed.
+                let stream_type = if peer.webrtc_remote_ipv6().await.unwrap_or(false) {
+                    "WebRTC/IPv6"
+                } else {
+                    stream_type
+                };
                 self.handler
                     .set_connection_type(is_secured, direct, stream_type); // flutter -> connection_ready
                 if !is_secured
@@ -300,6 +321,9 @@ impl<T: InvokeUiSession> Remote<T> {
 
                 let _keep_it = client::hc_connection(feedback, rendezvous_server, token).await;
                 let mut last_recv_time = Instant::now();
+                let mut webrtc_suspect_since: Option<Instant> = None;
+                let mut last_rx_progress = peer.rx_progress();
+                let mut peer_gone = false;
 
                 loop {
                     tokio::select! {
@@ -370,6 +394,37 @@ impl<T: InvokeUiSession> Remote<T> {
                                 self.handler.msgbox("restarting-show", "Restarting remote device", "Connection in progress. Please wait.", "");
                                 break;
                             }
+                            let rx_progress = peer.rx_progress();
+                            // `None` for transports that report none, and it never changes for a
+                            // given one, so they are inert here.
+                            let progressed = rx_progress != last_rx_progress;
+                            last_rx_progress = rx_progress;
+                            if peer.webrtc_disconnected() && !progressed {
+                                webrtc_suspect_since.get_or_insert_with(Instant::now);
+                            } else {
+                                webrtc_suspect_since = None;
+                            }
+                            // Neither limit is a hard upper bound. A send is awaited inline in
+                            // this loop, so one in progress delays this tick - bounded on WebRTC
+                            // by the timeout the stream was built with, not bounded at all on
+                            // KCP. The 30s watchdog above shares the loop and the same delay.
+                            peer_gone = webrtc_suspect_since
+                                .map_or(false, |since| since.elapsed() >= WEBRTC_SUSPECT_GRACE)
+                                || kcp
+                                    .as_ref()
+                                    .and_then(|k| k.peer_silent_for())
+                                    .map_or(false, |silent| silent >= KCP_PEER_SILENCE_LIMIT);
+                            if peer_gone {
+                                log::info!("Peer stopped answering, reconnecting");
+                                #[cfg(feature = "flutter")]
+                                self.handler.msgbox("restarting-show", "Connecting...", "Connection in progress. Please wait.", "");
+                                // Sciter knows no `restarting-show` and would show a dialog that
+                                // waits for a click, where the timeout this arrives ahead of is
+                                // retryable and reconnects on its own. Keep that message for it.
+                                #[cfg(not(feature = "flutter"))]
+                                self.handler.msgbox("error", "Connection Error", "Timeout", "");
+                                break;
+                            }
                             let elapsed = fps_instant.elapsed().as_millis();
                             if elapsed < 1000 {
                                 continue;
@@ -415,6 +470,11 @@ impl<T: InvokeUiSession> Remote<T> {
                     s.send(()).ok();
                 }
                 if kcp.is_some() {
+                    // Attempted rather than skipped even here: if the loss was one-way the peer
+                    // does get it, and drops its side instead of waiting out its own timeout.
+                    if peer_gone {
+                        peer.set_send_timeout(KCP_CLOSE_REASON_GONE_DEADLINE.as_millis() as u64);
+                    }
                     // Send the close reason if it hasn't been sent yet, as KCP cannot detect the socket close event.
                     self.send_close_reason(&mut peer, "kcp").await;
                     // KCP does not send messages immediately, so wait to ensure the last message is sent.
@@ -612,6 +672,9 @@ impl<T: InvokeUiSession> Remote<T> {
                             } else {
                                 log::debug!("Failed to record local audio channel: {}", err);
                             }
+                            // Both arms fall through with nothing else in this loop blocking, so
+                            // without a pause the thread spun a core for the whole voice call.
+                            std::thread::sleep(std::time::Duration::from_millis(1));
                         }
                     }
                 }
@@ -1591,11 +1654,19 @@ impl<T: InvokeUiSession> Remote<T> {
                         !lc.disable_clipboard.v && !lc.view_only.v && self.handler.is_ui_active()
                     };
                     if clipboard_allowed {
-                        #[cfg(not(any(
-                            target_os = "android",
-                            target_os = "ios",
-                            target_env = "ohos"
-                        )))]
+                        #[cfg(all(
+                            feature = "flutter",
+                            not(any(target_os = "android", target_os = "ios", target_env = "ohos"))
+                        ))]
+                        if self.handler.is_text_clipboard_required()
+                            && crate::clipboard::is_sync_clipboard_between_sessions_enabled()
+                        {
+                            let mut msg = Message::new();
+                            msg.set_clipboard(cb.clone());
+                            let session_id = self.handler.lc.read().unwrap().session_id;
+                            crate::flutter::send_clipboard_msg_to_other_sessions(msg, session_id);
+                        }
+                        #[cfg(not(any(target_os = "android", target_os = "ios", target_env = "ohos")))]
                         update_clipboard(vec![cb], ClipboardSide::Client);
                         #[cfg(target_os = "ios")]
                         {
@@ -1623,11 +1694,19 @@ impl<T: InvokeUiSession> Remote<T> {
                         !lc.disable_clipboard.v && !lc.view_only.v && self.handler.is_ui_active()
                     };
                     if clipboard_allowed {
-                        #[cfg(not(any(
-                            target_os = "android",
-                            target_os = "ios",
-                            target_env = "ohos"
-                        )))]
+                        #[cfg(all(
+                            feature = "flutter",
+                            not(any(target_os = "android", target_os = "ios", target_env = "ohos"))
+                        ))]
+                        if self.handler.is_text_clipboard_required()
+                            && crate::clipboard::is_sync_clipboard_between_sessions_enabled()
+                        {
+                            let mut msg = Message::new();
+                            msg.set_multi_clipboards(_mcb.clone());
+                            let session_id = self.handler.lc.read().unwrap().session_id;
+                            crate::flutter::send_clipboard_msg_to_other_sessions(msg, session_id);
+                        }
+                        #[cfg(not(any(target_os = "android", target_os = "ios", target_env = "ohos")))]
                         update_clipboard(_mcb.clipboards, ClipboardSide::Client);
                         #[cfg(target_os = "ios")]
                         {
@@ -2168,9 +2247,8 @@ impl<T: InvokeUiSession> Remote<T> {
                         #[cfg(target_os = "windows")]
                         Ok(file_transfer_send_request::FileType::Printer) => {
                             #[cfg(feature = "flutter")]
-                            let action = LocalConfig::get_option(
-                                config::keys::OPTION_PRINTER_INCOMING_JOB_ACTION,
-                            );
+                            let action =
+                                LocalConfig::get_option(keys::OPTION_PRINTER_INCOMING_JOB_ACTION);
                             #[cfg(not(feature = "flutter"))]
                             let action = "";
                             if action == "dismiss" {
@@ -2179,7 +2257,7 @@ impl<T: InvokeUiSession> Remote<T> {
                                 let id = fs::get_next_job_id();
                                 #[cfg(feature = "flutter")]
                                 let allow_auto_print = LocalConfig::get_bool_option(
-                                    config::keys::OPTION_PRINTER_ALLOW_AUTO_PRINT,
+                                    keys::OPTION_PRINTER_ALLOW_AUTO_PRINT,
                                 );
                                 #[cfg(not(feature = "flutter"))]
                                 let allow_auto_print = false;
@@ -2187,9 +2265,7 @@ impl<T: InvokeUiSession> Remote<T> {
                                     let printer_name = if action == "" {
                                         "".to_string()
                                     } else {
-                                        LocalConfig::get_option(
-                                            config::keys::OPTION_PRINTER_SELECTED_NAME,
-                                        )
+                                        LocalConfig::get_option(keys::OPTION_PRINTER_SELECTED_NAME)
                                     };
                                     self.handler.printer_response(id, _s.path, printer_name);
                                 } else {
@@ -2255,7 +2331,7 @@ impl<T: InvokeUiSession> Remote<T> {
                         .handle_screenshot_resp(response.sid, response.msg);
                 }
                 Some(message::Union::TerminalResponse(response)) => {
-                    use hbb_common::message_proto::terminal_response::Union;
+                    use base::message_proto::terminal_response::Union;
                     if let Some(Union::Opened(opened)) = &response.union {
                         if opened.success && !opened.service_id.is_empty() {
                             let mut lc = self.handler.lc.write().unwrap();
@@ -2485,12 +2561,12 @@ impl<T: InvokeUiSession> Remote<T> {
     ))]
     async fn handle_cliprdr_msg(
         &mut self,
-        clip: hbb_common::message_proto::Cliprdr,
+        clip: base::message_proto::Cliprdr,
         _peer: &mut Stream,
     ) {
         log::debug!("handling cliprdr msg from server peer");
         #[cfg(all(feature = "flutter", not(target_env = "ohos")))]
-        if let Some(hbb_common::message_proto::cliprdr::Union::FormatList(_)) = &clip.union {
+        if let Some(base::message_proto::cliprdr::Union::FormatList(_)) = &clip.union {
             if self.client_conn_id
                 != clipboard::get_client_conn_id(&crate::flutter::get_cur_peer_id()).unwrap_or(0)
             {
@@ -2649,8 +2725,7 @@ impl<T: InvokeUiSession> Remote<T> {
         );
         self.video_threads.insert(display, video_thread);
         if self.video_threads.len() == 1 {
-            let auto_record =
-                LocalConfig::get_bool_option(config::keys::OPTION_ALLOW_AUTO_RECORD_OUTGOING);
+            let auto_record = LocalConfig::get_bool_option(keys::OPTION_ALLOW_AUTO_RECORD_OUTGOING);
             self.handler.lc.write().unwrap().record_state = auto_record;
             self.update_record_state();
         }

@@ -784,8 +784,8 @@ pub(crate) fn start_captured_host() -> Result<(), String> {
     }
     owner.take();
     let input_enabled = hbb_common::config::option2bool(
-        hbb_common::config::keys::OPTION_ENABLE_KEYBOARD,
-        &hbb_common::config::Config::get_option(hbb_common::config::keys::OPTION_ENABLE_KEYBOARD),
+        base::config::keys::OPTION_ENABLE_KEYBOARD,
+        &hbb_common::config::Config::get_option(base::config::keys::OPTION_ENABLE_KEYBOARD),
     );
     if crate::platform::ohos::host_input_capable() && input_enabled {
         if let Err(error) = crate::platform::ohos::request_host_input_authorization() {

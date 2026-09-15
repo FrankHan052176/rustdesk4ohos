@@ -2,9 +2,9 @@
 use arboard::{ClipboardData, ClipboardFormat};
 #[cfg(all(target_os = "linux", not(target_env = "ohos")))]
 use arboard::{LinuxClipboardKind, SetExtLinux};
-use hbb_common::message_proto::*;
 #[cfg(not(any(target_os = "android", target_env = "ohos")))]
 use hbb_common::{bail, log, ResultType};
+use base::message_proto::*;
 #[cfg(not(any(target_os = "android", target_env = "ohos")))]
 use std::{
     sync::{Arc, Mutex},
@@ -15,6 +15,17 @@ pub const CLIPBOARD_NAME: &'static str = "clipboard";
 #[cfg(feature = "unix-file-copy-paste")]
 pub const FILE_CLIPBOARD_NAME: &'static str = "file-clipboard";
 pub const CLIPBOARD_INTERVAL: u64 = 333;
+
+pub const OPTION_ALLOW_SYNC_CLIPBOARD_BETWEEN_SESSIONS: &str =
+    "allow-sync-clipboard-between-sessions";
+
+#[cfg(all(feature = "flutter", not(any(target_os = "android", target_os = "ios"))))]
+pub fn is_sync_clipboard_between_sessions_enabled() -> bool {
+    hbb_common::config::option2bool(
+        OPTION_ALLOW_SYNC_CLIPBOARD_BETWEEN_SESSIONS,
+        &hbb_common::config::LocalConfig::get_option(OPTION_ALLOW_SYNC_CLIPBOARD_BETWEEN_SESSIONS),
+    )
+}
 
 // This format is used to store the flag in the clipboard.
 const RUSTDESK_CLIPBOARD_OWNER_FORMAT: &'static str = "dyn.com.rustdesk.owner";
@@ -511,10 +522,10 @@ impl ClipboardContext {
                 // The host-side clear file clipboard `let _ = self.inner.clear();`,
                 // does not work on KDE Plasma for the installed version.
 
-                // Don't use `hbb_common::platform::linux::is_kde()` here.
+                // Don't use `base::platform::linux::is_kde()` here.
                 // It's not correct in the server process.
                 #[cfg(target_os = "linux")]
-                let is_kde_x11 = hbb_common::platform::linux::is_kde_session()
+                let is_kde_x11 = base::platform::linux::is_kde_session()
                     && crate::platform::linux::is_x11();
                 #[cfg(target_os = "macos")]
                 let is_kde_x11 = false;
@@ -577,7 +588,7 @@ pub fn get_current_clipboard_msg(
         multi_clipboards
             .clipboards
             .iter()
-            .find(|c| c.format.enum_value() == Ok(hbb_common::message_proto::ClipboardFormat::Text))
+            .find(|c| c.format.enum_value() == Ok(base::message_proto::ClipboardFormat::Text))
             .map(|c| {
                 let mut msg = Message::new();
                 msg.set_clipboard(c.clone());
@@ -627,8 +638,8 @@ mod proto {
     use hbb_common::compress::decompress;
     use hbb_common::{
         compress::compress as compress_func,
-        message_proto::{Clipboard, ClipboardFormat, Message, MultiClipboards},
     };
+    use base::message_proto::{Clipboard, ClipboardFormat, Message, MultiClipboards};
 
     fn plain_to_proto(s: String, format: ClipboardFormat) -> Clipboard {
         let compressed = compress_func(s.as_bytes());
@@ -696,7 +707,7 @@ mod proto {
         let content = if compress {
             compressed
         } else {
-            s.bytes().collect::<Vec<u8>>()
+            d
         };
         Clipboard {
             compress,
@@ -791,6 +802,29 @@ mod proto {
                 msg.set_clipboard(c.clone());
                 msg
             })
+    }
+
+    #[cfg(all(test, not(target_os = "android")))]
+    mod tests {
+        use super::{from_clipboard, special_to_proto};
+        use arboard::ClipboardData;
+
+        #[test]
+        fn preserves_uncompressed_special_clipboard_data() {
+            let data = vec![0x01, 0x02, 0x03];
+            let name = "custom-format".to_owned();
+
+            let clipboard = special_to_proto(data.clone(), name.clone());
+
+            assert!(!clipboard.compress);
+            assert_eq!(clipboard.content.as_ref(), data.as_slice());
+            assert_eq!(clipboard.special_name, name);
+            assert!(matches!(
+                from_clipboard(clipboard),
+                Some(ClipboardData::Special((restored_name, restored_data)))
+                    if restored_name == name && restored_data == data
+            ));
+        }
     }
 }
 

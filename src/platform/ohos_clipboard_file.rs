@@ -5,7 +5,8 @@ use clipboard::{
     },
     ClipboardFile,
 };
-use hbb_common::{log, message_proto::Message};
+use base::message_proto::Message;
+use hbb_common::log;
 use std::{
     collections::{HashSet, VecDeque},
     fs::{self, File, OpenOptions},

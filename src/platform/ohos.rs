@@ -3,12 +3,10 @@ mod input;
 
 use crate::client::{Data, Interface};
 use crate::flutter_ffi::{EventToUI, SessionID};
-use hbb_common::{
-    message_proto::{
-        key_event, message, Clipboard, ClipboardFormat, KeyEvent, Message, MultiClipboards,
-    },
-    ResultType,
+use base::message_proto::{
+    key_event, message, Clipboard, ClipboardFormat, KeyEvent, Message, MultiClipboards,
 };
+use hbb_common::ResultType;
 use serde::Serialize;
 use std::{
     collections::{HashMap, HashSet, VecDeque},

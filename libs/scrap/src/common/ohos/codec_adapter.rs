@@ -7,7 +7,8 @@ use crate::{
     common::GoogleImage,
     CodecFormat, ImageRgb,
 };
-use hbb_common::{anyhow::anyhow, log, message_proto::EncodedVideoFrames, ResultType};
+use base::message_proto::EncodedVideoFrames;
+use hbb_common::{anyhow::anyhow, log, ResultType};
 
 pub fn encoder_config(
     format: CodecFormat,

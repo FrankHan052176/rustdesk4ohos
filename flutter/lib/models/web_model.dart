@@ -300,6 +300,11 @@ class PlatformFFI {
     return true;
   }
 
+  Future<T?> invokeMethodWithResult<T>(String method,
+      [dynamic arguments]) async {
+    return null;
+  }
+
   // just for compilation
   void syncAndroidServiceAppDirConfigPath() {}
 

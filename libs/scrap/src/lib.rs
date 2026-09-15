@@ -14,7 +14,7 @@ pub mod quartz;
 #[cfg(x11)]
 pub mod x11;
 
-#[cfg(all(x11, feature = "wayland"))]
+#[cfg(all(x11, feature = "wayland", not(target_env = "ohos")))]
 pub mod wayland;
 
 #[cfg(dxgi)]

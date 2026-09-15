@@ -1,6 +1,6 @@
 use std::io;
 
-use hbb_common::message_proto::{DisplayInfo, Resolution};
+use base::message_proto::{DisplayInfo, Resolution};
 
 use crate::common::{bail, ResultType};
 #[cfg(feature = "vram")]

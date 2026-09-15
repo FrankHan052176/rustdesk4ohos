@@ -11,12 +11,14 @@ pub use crate::{
     clipboard::{check_clipboard_files, FILE_CLIPBOARD_NAME as FILE_NAME},
     clipboard_file::unix_file_clip,
 };
+#[cfg(target_os = "android")]
+use base::config::keys;
 #[cfg(all(feature = "unix-file-copy-paste", target_os = "linux"))]
 use clipboard::platform::unix::fuse::{init_fuse_context, uninit_fuse_context};
 #[cfg(not(any(target_os = "android", target_env = "ohos")))]
 use clipboard_master::CallbackResult;
 #[cfg(any(target_os = "android", target_env = "ohos"))]
-use hbb_common::config::{keys, option2bool};
+use hbb_common::config::option2bool;
 #[cfg(any(target_os = "android", target_env = "ohos"))]
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{

@@ -14,9 +14,13 @@ use crate::{
 use flutter_rust_bridge::{StreamSink, SyncReturn};
 use hbb_common::{
     config::{self, LocalConfig, PeerConfig, PeerInfoSerde},
-    fs, lazy_static, log,
+    lazy_static, log,
     rendezvous_proto::ConnType,
     ResultType,
+};
+use base::{
+    config::keys,
+    fs,
 };
 use std::{
     collections::HashMap,
@@ -350,7 +354,7 @@ pub fn session_toggle_option(session_id: SessionID, value: String) {
     }
     #[cfg(any(feature = "unix-file-copy-paste", feature = "cliprdr-file-service"))]
     if sessions::get_session_by_session_id(&session_id).is_some()
-        && (value == config::keys::OPTION_ENABLE_FILE_COPY_PASTE || value == "view-only")
+        && (value == keys::OPTION_ENABLE_FILE_COPY_PASTE || value == "view-only")
     {
         crate::flutter::update_file_clipboard_required();
     }
@@ -985,12 +989,12 @@ pub fn main_get_error() -> String {
 pub fn main_set_option(key: String, value: String) {
     #[cfg(target_os = "android")]
     {
-        let is_permission_option = key.eq(config::keys::OPTION_ENABLE_CLIPBOARD)
-            || key.eq(config::keys::OPTION_ENABLE_FILE_TRANSFER)
-            || key.eq(config::keys::OPTION_ENABLE_AUDIO);
+        let is_permission_option = key.eq(keys::OPTION_ENABLE_CLIPBOARD)
+            || key.eq(keys::OPTION_ENABLE_FILE_TRANSFER)
+            || key.eq(keys::OPTION_ENABLE_AUDIO);
         let allow_perm_change_in_accept_window = config::option2bool(
-            config::keys::OPTION_ENABLE_PERM_CHANGE_IN_ACCEPT_WINDOW,
-            &crate::get_builtin_option(config::keys::OPTION_ENABLE_PERM_CHANGE_IN_ACCEPT_WINDOW),
+            keys::OPTION_ENABLE_PERM_CHANGE_IN_ACCEPT_WINDOW,
+            &crate::get_builtin_option(keys::OPTION_ENABLE_PERM_CHANGE_IN_ACCEPT_WINDOW),
         );
         if is_permission_option
             && !allow_perm_change_in_accept_window
@@ -1005,14 +1009,14 @@ pub fn main_set_option(key: String, value: String) {
         }
     }
     #[cfg(any(target_os = "android", target_env = "ohos"))]
-    if key.eq(config::keys::OPTION_ENABLE_KEYBOARD) {
+    if key.eq(keys::OPTION_ENABLE_KEYBOARD) {
         crate::ui_cm_interface::switch_permission_all(
             "keyboard".to_owned(),
             config::option2bool(&key, &value),
         );
     }
     #[cfg(any(target_os = "android", target_env = "ohos"))]
-    if key.eq(config::keys::OPTION_ENABLE_CLIPBOARD) {
+    if key.eq(keys::OPTION_ENABLE_CLIPBOARD) {
         crate::ui_cm_interface::switch_permission_all(
             "clipboard".to_owned(),
             config::option2bool(&key, &value),
@@ -1029,11 +1033,11 @@ pub fn main_set_option(key: String, value: String) {
     // If `is_allow_tls_fallback` and https proxy is used, we need to restart rendezvous mediator.
     // No need to check if https proxy is used, because this option does not change frequently
     // and restarting mediator is safe even https proxy is not used.
-    let is_allow_tls_fallback = key.eq(config::keys::OPTION_ALLOW_INSECURE_TLS_FALLBACK);
+    let is_allow_tls_fallback = key.eq(keys::OPTION_ALLOW_INSECURE_TLS_FALLBACK);
     if is_allow_tls_fallback
         || key.eq("custom-rendezvous-server")
-        || key.eq(config::keys::OPTION_ALLOW_WEBSOCKET)
-        || key.eq(config::keys::OPTION_DISABLE_UDP)
+        || key.eq(keys::OPTION_ALLOW_WEBSOCKET)
+        || key.eq(keys::OPTION_DISABLE_UDP)
         || key.eq("api-server")
     {
         if is_allow_tls_fallback {
@@ -1062,14 +1066,14 @@ pub fn main_set_options(json: String) {
     #[cfg(target_os = "android")]
     {
         let allow_perm_change_in_accept_window = config::option2bool(
-            config::keys::OPTION_ENABLE_PERM_CHANGE_IN_ACCEPT_WINDOW,
-            &crate::get_builtin_option(config::keys::OPTION_ENABLE_PERM_CHANGE_IN_ACCEPT_WINDOW),
+            keys::OPTION_ENABLE_PERM_CHANGE_IN_ACCEPT_WINDOW,
+            &crate::get_builtin_option(keys::OPTION_ENABLE_PERM_CHANGE_IN_ACCEPT_WINDOW),
         );
         if !allow_perm_change_in_accept_window && crate::ui_cm_interface::has_active_clients() {
             for key in [
-                config::keys::OPTION_ENABLE_CLIPBOARD,
-                config::keys::OPTION_ENABLE_FILE_TRANSFER,
-                config::keys::OPTION_ENABLE_AUDIO,
+                keys::OPTION_ENABLE_CLIPBOARD,
+                keys::OPTION_ENABLE_FILE_TRANSFER,
+                keys::OPTION_ENABLE_AUDIO,
             ] {
                 if let Some(value) = map.remove(key) {
                     log::info!(
@@ -1237,8 +1241,8 @@ pub fn main_set_env(key: String, value: Option<String>) -> SyncReturn<()> {
 }
 
 pub fn main_set_local_option(key: String, value: String) {
-    let is_texture_render_key = key.eq(config::keys::OPTION_TEXTURE_RENDER);
-    let is_d3d_render_key = key.eq(config::keys::OPTION_ALLOW_D3D_RENDER);
+    let is_texture_render_key = key.eq(keys::OPTION_TEXTURE_RENDER);
+    let is_d3d_render_key = key.eq(keys::OPTION_ALLOW_D3D_RENDER);
     set_local_option(key, value.clone());
     let is_render_target =
         |session: &crate::flutter::FlutterSession| session.is_default() || session.is_view_camera();
@@ -2956,7 +2960,7 @@ pub fn main_get_common(key: String) -> String {
         #[cfg(not(target_os = "windows"))]
         return false.to_string();
     } else if key == "transfer-job-id" {
-        return hbb_common::fs::get_next_job_id().to_string();
+        return base::fs::get_next_job_id().to_string();
     } else if key == "is-remote-modify-enabled-by-control-permissions" {
         return match is_remote_modify_enabled_by_control_permissions() {
             Some(true) => "true",
@@ -3217,12 +3221,16 @@ pub mod server_side {
         env: JNIEnv,
         _class: JClass,
         app_dir: JString,
+        home_dir: JString,
         custom_client_config: JString,
     ) {
         log::debug!("startServer from jvm");
         let mut env = env;
         if let Ok(app_dir) = env.get_string(&app_dir) {
             *config::APP_DIR.write().unwrap() = app_dir.into();
+        }
+        if let Ok(home_dir) = env.get_string(&home_dir) {
+            *config::APP_HOME_DIR.write().unwrap() = home_dir.into();
         }
         if let Ok(custom_client_config) = env.get_string(&custom_client_config) {
             if !custom_client_config.is_empty() {

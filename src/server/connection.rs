@@ -38,13 +38,11 @@ use hbb_common::protobuf::EnumOrUnknown;
 use hbb_common::{
     config::{
         self, decode_permanent_password_h1_from_storage, decode_preset_password_h1_from_storage,
-        keys, local_permanent_password_storage_is_usable_for_auth,
+        local_permanent_password_storage_is_usable_for_auth,
         preset_permanent_password_storage_is_usable_for_auth, Config, TrustedDevice,
     },
-    fs::{self, can_enable_overwrite_detection, JobType},
     futures::{SinkExt, StreamExt},
     get_time, get_version_number,
-    message_proto::{option_message::BoolOption, permission_info::Permission},
     password_security::{self as password, ApproveMode},
     sha2::{Digest, Sha256},
     sleep, timeout,
@@ -54,6 +52,11 @@ use hbb_common::{
         time::{self, Duration, Instant},
     },
     tokio_util::codec::{BytesCodec, Framed},
+};
+use base::{
+    config::keys,
+    fs::{self, can_enable_overwrite_detection, JobType},
+    message_proto::{option_message::BoolOption, permission_info::Permission},
 };
 #[cfg(any(target_os = "android", target_os = "ios"))]
 use scrap::android::{call_main_service_key_event, call_main_service_pointer_input};
@@ -290,6 +293,7 @@ pub struct Connection {
     view_camera: bool,
     terminal: bool,
     port_forward_socket: Option<Framed<TcpStream, BytesCodec>>,
+    port_forward_mux: Option<super::port_forward_mux::PortForwardMux>,
     port_forward_address: String,
     tx_to_cm: mpsc::UnboundedSender<ipc::Data>,
     authorized: bool,
@@ -504,6 +508,7 @@ impl Connection {
             view_camera: false,
             terminal: false,
             port_forward_socket: None,
+            port_forward_mux: None,
             port_forward_address: "".to_owned(),
             tx_to_cm,
             authorized: false,
@@ -628,13 +633,9 @@ impl Connection {
             crate::rustdesk_interval(time::interval_at(Instant::now(), TEST_DELAY_TIMEOUT));
         let mut last_recv_time = Instant::now();
 
-        conn.stream.set_send_timeout(
-            if conn.file_transfer.is_some() || conn.port_forward_socket.is_some() || conn.terminal {
-                SEND_TIMEOUT_OTHER
-            } else {
-                SEND_TIMEOUT_VIDEO
-            },
-        );
+        // The connection type is not known until the login request arrives;
+        // `on_message` picks the type-specific timeout then.
+        conn.stream.set_send_timeout(SEND_TIMEOUT_VIDEO);
 
         #[cfg(not(any(target_os = "android", target_os = "ios", target_env = "ohos")))]
         std::thread::spawn(move || Self::handle_input(_rx_input, tx_cloned));
@@ -1770,7 +1771,7 @@ impl Connection {
         }
     }
 
-    fn normalize_port_forward_target(pf: &mut PortForward) -> (String, bool) {
+    pub(super) fn normalize_port_forward_target(pf: &mut PortForward) -> (String, bool) {
         let mut is_rdp = false;
         if pf.host == "RDP" && pf.port == 0 {
             pf.host = "localhost".to_owned();
@@ -1784,12 +1785,21 @@ impl Connection {
     }
 
     async fn connect_port_forward_if_needed(&mut self) -> bool {
-        if self.port_forward_socket.is_some() {
+        if self.is_port_forward() {
             return true;
         }
         let Some(login_request::Union::PortForward(pf)) = self.lr.union.as_ref() else {
             return true;
         };
+        if pf.multiplex {
+            crate::port_forward_mux::cap_packet_size(&mut self.stream);
+            // `inner.tx` is set for the connection's whole life; `None` here is
+            // unreachable, and refusing the login is the only honest answer.
+            self.port_forward_mux = self.inner.tx.clone().map(|tx| {
+                super::port_forward_mux::PortForwardMux::new(tx, self.port_forward_address.clone())
+            });
+            return self.port_forward_mux.is_some();
+        }
         let mut pf = pf.clone();
         let (mut addr, is_rdp) = Self::normalize_port_forward_target(&mut pf);
         self.port_forward_address = addr.clone();
@@ -1877,7 +1887,7 @@ impl Connection {
         self.clear_id_whitelist_failures();
         let (conn_type, auth_conn_type) = if self.file_transfer.is_some() {
             (1, AuthConnType::FileTransfer)
-        } else if self.port_forward_socket.is_some() {
+        } else if self.is_port_forward() {
             (2, AuthConnType::PortForward)
         } else if self.view_camera {
             (3, AuthConnType::ViewCamera)
@@ -2000,7 +2010,12 @@ impl Connection {
             pi.platform_additions = serde_json::to_string(&platform_additions).unwrap_or("".into());
         }
 
-        if self.port_forward_socket.is_some() {
+        if self.is_port_forward() {
+            pi.features = Some(Features {
+                port_forward_mux: self.port_forward_mux.is_some(),
+                ..Default::default()
+            })
+            .into();
             let mut msg_out = Message::new();
             res.set_peer_info(pi);
             msg_out.set_login_response(res);
@@ -2160,11 +2175,17 @@ impl Connection {
         self.update_scoped_login_options().await;
         if let Some((dir, show_hidden)) = self.file_transfer.clone() {
             self.keyboard = false;
-            let dir = if !dir.is_empty() && std::path::Path::new(&dir).is_dir() {
-                &dir
-            } else {
-                ""
-            };
+            let is_existing_dir = !dir.is_empty() && std::path::Path::new(&dir).is_dir();
+            let is_allowed_dir =
+                is_existing_dir && crate::common::is_peer_path_allowed(&dir, false);
+            #[cfg(target_os = "android")]
+            if is_existing_dir && !is_allowed_dir {
+                log::warn!(
+                    "Use the app workspace because the initial file-transfer directory is outside it: {}",
+                    dir
+                );
+            }
+            let dir = if is_allowed_dir { &dir } else { "" };
             if !wait_session_id_confirm {
                 self.read_dir(dir, show_hidden);
             } else {
@@ -2200,9 +2221,14 @@ impl Connection {
     #[inline]
     fn is_remote(&self) -> bool {
         self.file_transfer.is_none()
-            && self.port_forward_socket.is_none()
+            && !self.is_port_forward()
             && !self.view_camera
             && !self.terminal
+    }
+
+    #[inline]
+    fn is_port_forward(&self) -> bool {
+        self.port_forward_socket.is_some() || self.port_forward_mux.is_some()
     }
 
     fn try_sub_monitor_services(&mut self) {
@@ -2349,6 +2375,16 @@ impl Connection {
     #[inline]
     fn send_to_cm(&mut self, data: ipc::Data) {
         self.tx_to_cm.send(data).ok();
+    }
+
+    fn handle_port_forward_channel(&mut self, ch: PortForwardChannel) {
+        let Some(mux) = self.port_forward_mux.as_mut() else {
+            log::debug!("port forward channel frame on a non-multiplexed connection");
+            return;
+        };
+        mux.handle(ch, || {
+            Self::permission(keys::OPTION_ENABLE_TUNNEL, &self.control_permissions)
+        });
     }
 
     #[inline]
@@ -2716,11 +2752,13 @@ impl Connection {
                 let PortForward {
                     host,
                     port,
+                    multiplex,
                     special_fields: _,
                 } = pf;
                 push(b"port_forward");
                 push(host.as_bytes());
                 push(&port.to_le_bytes());
+                push(&[*multiplex as u8]);
             }
             // Variants this build does not know execute as remote, so they latch as remote.
             None | Some(_) => push(b"remote"),
@@ -2926,6 +2964,17 @@ impl Connection {
                     }
                 }
             }
+
+            self.stream.set_send_timeout(
+                if self.file_transfer.is_some()
+                    || self.terminal
+                    || matches!(self.lr.union, Some(login_request::Union::PortForward(_)))
+                {
+                    SEND_TIMEOUT_OTHER
+                } else {
+                    SEND_TIMEOUT_VIDEO
+                },
+            );
 
             if !crate::common::is_direct_ip_access(&lr.username) && lr.username != Config::get_id()
             {
@@ -3572,6 +3621,81 @@ impl Connection {
                                 return true;
                             }
                         }
+                        // Android is scoped-storage only: reject any peer supplied path that
+                        // escapes the app workspace before it reaches the filesystem.
+                        #[cfg(target_os = "android")]
+                        {
+                            // (path, job id, allow empty) of the peer supplied path this action
+                            // operates on.
+                            let checked: Option<(&str, i32, bool)> = match &fa.union {
+                                Some(file_action::Union::ReadEmptyDirs(rd)) => {
+                                    Some((rd.path.as_str(), -1, false))
+                                }
+                                Some(file_action::Union::ReadDir(rd)) => {
+                                    Some((rd.path.as_str(), 0, true))
+                                }
+                                Some(file_action::Union::AllFiles(f)) => {
+                                    Some((f.path.as_str(), f.id, false))
+                                }
+                                Some(file_action::Union::Send(s)) => {
+                                    // Printer jobs read from memory, `path` is only a lookup key.
+                                    if JobType::from_proto(s.file_type) == JobType::Generic {
+                                        Some((s.path.as_str(), s.id, false))
+                                    } else {
+                                        None
+                                    }
+                                }
+                                Some(file_action::Union::Receive(r)) => {
+                                    Some((r.path.as_str(), r.id, false))
+                                }
+                                Some(file_action::Union::RemoveDir(d)) => {
+                                    Some((d.path.as_str(), d.id, false))
+                                }
+                                Some(file_action::Union::RemoveFile(f)) => {
+                                    Some((f.path.as_str(), f.id, false))
+                                }
+                                Some(file_action::Union::Create(c)) => {
+                                    Some((c.path.as_str(), c.id, false))
+                                }
+                                Some(file_action::Union::Rename(r)) => {
+                                    Some((r.path.as_str(), r.id, false))
+                                }
+                                _ => None,
+                            };
+                            if let Some((path, job_id, allow_empty)) = checked {
+                                if !crate::common::is_peer_path_allowed(path, allow_empty) {
+                                    log::warn!(
+                                        "Reject file action outside the app workspace: {}",
+                                        path
+                                    );
+                                    if job_id >= 0 {
+                                        self.send(fs::new_error(job_id, "Permission denied", -1))
+                                            .await;
+                                    }
+                                    return true;
+                                }
+                            }
+                            if let Some(file_action::Union::Rename(r)) = &fa.union {
+                                let destination = std::path::Path::new(&r.path)
+                                    .parent()
+                                    .map(|parent| parent.join(&r.new_name));
+                                let allowed = destination
+                                    .as_deref()
+                                    .and_then(std::path::Path::to_str)
+                                    .map_or(false, |path| {
+                                        crate::common::is_peer_path_allowed(path, false)
+                                    });
+                                if !allowed {
+                                    log::warn!(
+                                        "Reject rename destination outside the app workspace: {:?}",
+                                        destination
+                                    );
+                                    self.send(fs::new_error(r.id, "Permission denied", -1))
+                                        .await;
+                                    return true;
+                                }
+                            }
+                        }
                         match fa.union {
                             Some(file_action::Union::ReadEmptyDirs(rd)) => {
                                 self.read_empty_dirs(&rd.path, rd.include_hidden);
@@ -4068,6 +4192,7 @@ impl Connection {
                         self.refresh_video_display(Some(request.display as usize));
                     }
                 }
+                Some(message::Union::PortForwardChannel(ch)) => self.handle_port_forward_channel(ch),
                 Some(message::Union::TerminalAction(action)) => {
                     #[cfg(not(any(
                         target_os = "android",
@@ -5270,7 +5395,11 @@ impl Connection {
         // But it's not necessary now and we have to consider two audio services(client, server).
         crate::audio_service::set_voice_call_input_device(None, true);
         log::info!("#{} Connection closed: {}", self.inner.id(), reason);
-        if lock && self.lock_after_session_end && self.keyboard {
+        if lock
+            && self.lock_after_session_end
+            && self.keyboard
+            && !raii::AuthedConnID::session_reconnected(self.inner.id(), &self.session_key())
+        {
             #[cfg(not(any(target_os = "android", target_os = "ios", target_env = "ohos")))]
             lock_screen().await;
         }
@@ -5288,6 +5417,9 @@ impl Connection {
         {
             self.ohos_clipboard_materializer.cancel();
             clipboard::platform::unix::serv_files::clear_conn_files(self.inner.id());
+        }
+        if let Some(mut mux) = self.port_forward_mux.take() {
+            mux.close_all();
         }
     }
 
@@ -5890,7 +6022,7 @@ impl Connection {
         let allowed = match conn_type {
             AuthConnType::Remote => true,
             AuthConnType::FileTransfer => Self::is_file_transfer_scoped_message(msg),
-            AuthConnType::PortForward => false,
+            AuthConnType::PortForward => Self::is_port_forward_scoped_message(msg),
             AuthConnType::ViewCamera => Self::is_view_camera_scoped_message(msg),
             AuthConnType::Terminal => Self::is_terminal_scoped_message(msg),
         };
@@ -5962,6 +6094,13 @@ impl Connection {
         #[cfg(not(windows))]
         let _ = misc;
         false
+    }
+
+    fn is_port_forward_scoped_message(msg: &Message) -> bool {
+        matches!(
+            msg.union.as_ref(),
+            Some(message::Union::PortForwardChannel(_))
+        )
     }
 
     fn is_terminal_scoped_message(msg: &Message) -> bool {
@@ -6114,6 +6253,7 @@ impl Connection {
             Some(message::Union::ScreenshotResponse(_)) => "screenshot_response",
             Some(message::Union::TerminalAction(_)) => "terminal_action",
             Some(message::Union::TerminalResponse(_)) => "terminal_response",
+            Some(message::Union::PortForwardChannel(_)) => "port_forward_channel",
             Some(message::Union::Misc(misc)) => Self::misc_message_family(misc),
             Some(_) => "message.other",
             None => "empty",
@@ -6150,7 +6290,7 @@ impl Connection {
             "Process clipboard message from clip, stop: {}, is_stopping_allowed: {}, file_transfer_enabled: {}",
             stop, is_stopping_allowed, file_transfer_enabled);
         if !stop {
-            use hbb_common::config::keys::OPTION_ONE_WAY_FILE_TRANSFER;
+            use base::config::keys::OPTION_ONE_WAY_FILE_TRANSFER;
             // Note: Code will not reach here if `crate::get_builtin_option(OPTION_ONE_WAY_FILE_TRANSFER) == "Y"` is true.
             // Because `file-clipboard` service will not be subscribed.
             // But we still check it here to keep the same logic to windows version in `ui_cm_interface.rs`.
@@ -6828,6 +6968,21 @@ mod raii {
     pub struct AuthedConnID(i32, AuthConnType);
 
     impl AuthedConnID {
+        pub(super) fn is_newer_session_remote(c: &AuthedConn, id: i32, key: &SessionKey) -> bool {
+            c.conn_id > id && c.conn_type == AuthConnType::Remote && &c.session_key == key
+        }
+
+        /// Whether a newer remote control connection of this session has replaced this one. A
+        /// controlling peer whose link dies reconnects while the connection it left behind runs
+        /// on here until its own timeout; locking for that one would lock a session that has
+        /// already resumed on its replacement.
+        pub fn session_reconnected(id: i32, key: &SessionKey) -> bool {
+            let conns = AUTHED_CONNS.lock().unwrap();
+            conns
+                .iter()
+                .any(|c| Self::is_newer_session_remote(c, id, key))
+        }
+
         pub fn new(
             conn_id: i32,
             conn_type: AuthConnType,
@@ -7449,6 +7604,10 @@ mod test {
                         }),
                         Some("misc.option"),
                     ),
+                    (
+                        msg(|m| m.set_port_forward_channel(PortForwardChannel::new())),
+                        Some("port_forward_channel"),
+                    ),
                 ],
             ),
             (
@@ -7509,6 +7668,10 @@ mod test {
                             o.disable_audio = BoolOption::Yes.into();
                         }),
                         Some("misc.option"),
+                    ),
+                    (
+                        msg(|m| m.set_port_forward_channel(PortForwardChannel::new())),
+                        Some("port_forward_channel"),
                     ),
                 ],
             ),
@@ -7610,6 +7773,10 @@ mod test {
                         }),
                         None,
                     ),
+                    (
+                        msg(|m| m.set_port_forward_channel(PortForwardChannel::new())),
+                        None,
+                    ),
                 ],
             ),
         ];
@@ -7707,5 +7874,39 @@ mod test {
             scoped.terminal_persistent.enum_value(),
             Ok(BoolOption::NotSet)
         );
+    }
+    #[test]
+    fn only_a_newer_remote_control_of_the_same_session_keeps_the_screen_unlocked() {
+        let replaced_by = super::raii::AuthedConnID::is_newer_session_remote;
+
+        let key = |session_id, peer: &str| SessionKey {
+            peer_id: peer.to_owned(),
+            name: "".to_owned(),
+            session_id,
+        };
+        let conn = |conn_id, conn_type, session_key| AuthedConn {
+            conn_id,
+            conn_type,
+            session_key,
+            sender: mpsc::unbounded_channel().0,
+            printer: false,
+        };
+        let mine = key(7, "peer");
+        let remote = AuthConnType::Remote;
+
+        assert!(replaced_by(&conn(3, remote, mine.clone()), 2, &mine));
+        // An older one, and itself: of connections ending at once only the last still locks.
+        assert!(!replaced_by(&conn(1, remote, mine.clone()), 2, &mine));
+        assert!(!replaced_by(&conn(2, remote, mine.clone()), 2, &mine));
+        // A kind that keeps no screen in use.
+        assert!(!replaced_by(
+            &conn(3, AuthConnType::Terminal, mine.clone()),
+            2,
+            &mine
+        ));
+        // Another session of this peer, and another peer on the same session id: `SessionKey`
+        // is all three fields, and either of those is someone else's screen to lock.
+        assert!(!replaced_by(&conn(3, remote, key(8, "peer")), 2, &mine));
+        assert!(!replaced_by(&conn(3, remote, key(7, "other")), 2, &mine));
     }
 }

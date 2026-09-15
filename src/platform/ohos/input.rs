@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use hbb_common::message_proto::{key_event, ControlKey, KeyEvent, KeyboardMode};
+use base::message_proto::{key_event, ControlKey, KeyEvent, KeyboardMode};
 
 const INPUT_SUCCESS: i32 = 0;
 const INPUT_INJECTION_AUTHORIZING: i32 = 3_900_005;

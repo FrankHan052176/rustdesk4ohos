@@ -5,7 +5,7 @@ use crate::{
     CodecFormat, EncodeInput, EncodeYuvFormat, Pixfmt,
 };
 use hbb_common::bytes::Bytes;
-use hbb_common::message_proto::{
+use base::message_proto::{
     supported_decoding::PreferCodec, Chroma, EncodedVideoFrame, EncodedVideoFrames,
     SupportedDecoding, VideoFrame,
 };

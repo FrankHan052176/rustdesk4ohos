@@ -1,3 +1,5 @@
+#[cfg(any(test, not(target_os = "linux")))]
+mod audio_resampler;
 mod keyboard;
 #[cfg(all(
     target_env = "ohos",
@@ -64,6 +66,7 @@ mod custom_server;
 mod lang;
 #[cfg(not(any(target_os = "android", target_os = "ios", target_env = "ohos")))]
 mod port_forward;
+mod port_forward_mux;
 
 #[cfg(not(any(target_os = "android", target_os = "ios", target_env = "ohos")))]
 mod tray;

@@ -23,6 +23,10 @@ use crate::{
     CodecFormat, EncodeInput, EncodeYuvFormat, ImageRgb, ImageTexture,
 };
 
+use base::message_proto::{
+    supported_decoding::PreferCodec, video_frame, Chroma, CodecAbility, EncodedVideoFrames,
+    SupportedDecoding, SupportedEncoding, VideoFrame,
+};
 #[cfg(any(
     feature = "hwcodec",
     feature = "mediacodec",
@@ -35,10 +39,6 @@ use hbb_common::{
     bail,
     config::{Config, PeerConfig},
     lazy_static, log,
-    message_proto::{
-        supported_decoding::PreferCodec, video_frame, Chroma, CodecAbility, EncodedVideoFrames,
-        SupportedDecoding, SupportedEncoding, VideoFrame,
-    },
     sysinfo::System,
     ResultType,
 };
@@ -304,10 +304,10 @@ impl Encoder {
             .unwrap_or((PreferCodec::Auto.into(), 0));
         let preference = most_frequent.enum_value_or(PreferCodec::Auto);
 
-        // auto: h265 > h264 > av1/vp9/vp8 on existing platforms.
+        // auto: h265 > h264 > av1/vp9/vp8
         // HarmonyOS deliberately keeps VP9 as the only software fallback.
         #[cfg(not(target_env = "ohos"))]
-        let av1_test = Config::get_option(hbb_common::config::keys::OPTION_AV1_TEST) != "N";
+        let av1_test = Config::get_option(base::config::keys::OPTION_AV1_TEST) != "N";
         #[cfg(not(target_env = "ohos"))]
         let mut auto_codec = if av1_useable && av1_test {
             CodecFormat::AV1
@@ -951,7 +951,7 @@ impl Decoder {
 
 #[cfg(any(feature = "hwcodec", feature = "mediacodec"))]
 pub fn enable_hwcodec_option() -> bool {
-    use hbb_common::config::keys::OPTION_ENABLE_HWCODEC;
+    use base::config::keys::OPTION_ENABLE_HWCODEC;
 
     if !cfg!(target_os = "ios") {
         return option2bool(
@@ -963,7 +963,7 @@ pub fn enable_hwcodec_option() -> bool {
 }
 #[cfg(feature = "vram")]
 pub fn enable_vram_option(encode: bool) -> bool {
-    use hbb_common::config::keys::OPTION_ENABLE_HWCODEC;
+    use base::config::keys::OPTION_ENABLE_HWCODEC;
 
     if cfg!(windows) {
         let enable = option2bool(
@@ -982,13 +982,13 @@ pub fn enable_vram_option(encode: bool) -> bool {
 
 #[cfg(windows)]
 pub fn enable_directx_capture() -> bool {
-    use hbb_common::config::keys::OPTION_ENABLE_DIRECTX_CAPTURE as OPTION;
+    use base::config::keys::OPTION_ENABLE_DIRECTX_CAPTURE as OPTION;
     option2bool(OPTION, &Config::get_option(OPTION))
 }
 
 #[cfg(windows)]
 pub fn allow_d3d_render() -> bool {
-    use hbb_common::config::keys::OPTION_ALLOW_D3D_RENDER as OPTION;
+    use base::config::keys::OPTION_ALLOW_D3D_RENDER as OPTION;
     option2bool(OPTION, &hbb_common::config::LocalConfig::get_option(OPTION))
 }
 
@@ -1082,7 +1082,7 @@ pub fn codec_thread_num(limit: usize) -> usize {
     #[cfg(windows)]
     {
         res = 0;
-        let percent = hbb_common::platform::windows::cpu_uage_one_minute();
+        let percent = base::platform::windows::cpu_uage_one_minute();
         info = format!("cpu usage: {:?}", percent);
         if let Some(pecent) = percent {
             if pecent < 100.0 {
@@ -1140,7 +1140,7 @@ fn disable_av1() -> bool {
 
 #[cfg(not(target_os = "ios"))]
 pub fn test_av1() {
-    use hbb_common::config::keys::OPTION_AV1_TEST;
+    use base::config::keys::OPTION_AV1_TEST;
     use hbb_common::rand::Rng;
     use std::{sync::Once, time::Duration};
 

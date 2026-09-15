@@ -31,13 +31,15 @@ pub mod ohos_clipboard_file;
 #[cfg(all(target_os = "linux", not(target_env = "ohos")))]
 pub mod gtk_sudo;
 
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+use base::message_proto::CursorData;
 #[cfg(all(
     not(all(target_os = "windows", not(target_pointer_width = "64"))),
     not(any(target_os = "android", target_os = "ios", target_env = "ohos"))
 ))]
 use hbb_common::sysinfo::System;
 #[cfg(not(any(target_os = "android", target_os = "ios", target_env = "ohos")))]
-use hbb_common::{message_proto::CursorData, sysinfo::Pid, ResultType};
+use hbb_common::{sysinfo::Pid, ResultType};
 use std::sync::{Arc, Mutex};
 #[cfg(not(any(target_os = "macos", target_os = "android", target_os = "ios")))]
 pub const SERVICE_INTERVAL: u64 = 300;
