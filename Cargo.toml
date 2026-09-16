@@ -232,7 +232,9 @@ exclude = ["vdi/host"]
 # Patch libxdo-sys to use a stub implementation that doesn't require libxdo
 # This allows building and running on systems without libxdo installed (e.g., Wayland-only)
 [patch.crates-io]
-webrtc-util = { git = "https://github.com/FrankHan052176/webrtc", rev = "edaa66a963d65ce8d5b087c43716a1fd1701d102" }
+# webrtc-util needs upstream's 80d5a205 for `max_binding_requests` and our OHOS nix fix, so it
+# comes from the fork's merge of both; the other two crates stay on upstream's rev.
+webrtc-util = { git = "https://github.com/FrankHan052176/webrtc", rev = "1afbd77c148b50e6f1169921f78ff2deddf4eaaf" }
 libxdo-sys = { path = "libs/libxdo-sys-stub" }
 libsodium-sys = { git = "https://github.com/FrankHan052176/sodiumoxide", rev = "a09de89d843f88a7bfccd80266150fe5d33e1eee" }
 # One branch off upstream v0.13.0, the tag whose crate versions match this stack.
@@ -249,7 +251,10 @@ libsodium-sys = { git = "https://github.com/FrankHan052176/sodiumoxide", rev = "
 # the SACK settle the rest (F-RTO), timed from the latest send, so a stall no longer resends the
 # whole backlog behind itself while a short lost tail still comes back at once.
 # Pinned by rev, not branch: a fork branch can be rewritten out from under the lockfile.
-webrtc-sctp = { git = "https://github.com/rustdesk-org/webrtc", rev = "db3b07a9dd8f195916c89c2e62a8911402b11d27" }
+# webrtc: SettingEngine cannot reach the ICE agent's max_binding_requests, which decides how
+# long the answerer keeps checking a pair that has not answered yet.
+webrtc = { git = "https://github.com/rustdesk-org/webrtc", rev = "80d5a20532cf58f5d4d237c437a98ceb85ee40dc" }
+webrtc-sctp = { git = "https://github.com/rustdesk-org/webrtc", rev = "80d5a20532cf58f5d4d237c437a98ceb85ee40dc" }
 
 [package.metadata.winres]
 LegalCopyright = "Copyright © 2026 Purslane Tech Pte. Ltd. All rights reserved."
@@ -291,5 +296,5 @@ debug = 1
 
 [patch."https://github.com/rustdesk-org/webrtc"]
 # The pinned rev pulls nix with its glibc-only default features, which cannot build for
-# target_env = ohos; the fork keeps the same version without them.
-webrtc-util = { git = "https://github.com/FrankHan052176/webrtc", rev = "edaa66a963d65ce8d5b087c43716a1fd1701d102" }
+# target_env = ohos; the fork keeps the same version without them, on top of that rev.
+webrtc-util = { git = "https://github.com/FrankHan052176/webrtc", rev = "1afbd77c148b50e6f1169921f78ff2deddf4eaaf" }
