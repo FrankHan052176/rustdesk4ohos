@@ -126,6 +126,13 @@ jobs:
           python3 .github/scripts/prepare-ohos-signing.py "$RUSTDESK_SIGNING_DIR"
           echo "RUSTDESK_SIGNING_DIR=$RUSTDESK_SIGNING_DIR" >> "$GITHUB_ENV"
 
+      - name: Derive the App version
+        shell: bash
+        run: |
+          python3 scripts/derive-ohos-app-version.py \
+            --run-number "$GITHUB_RUN_NUMBER" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT"
+
       - name: Package signed Flutter OpenHarmony APP
         shell: bash
         env:

@@ -69,6 +69,7 @@ jobs:
         shell: bash
         run: |
           python3 scripts/test_prepare_ohos_flutter.py
+          python3 scripts/test_derive_ohos_app_version.py
           python3 scripts/prepare-ohos-flutter.py --check
 
   generate-sbom:
