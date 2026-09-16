@@ -104,5 +104,36 @@ fi
 dependency_backup_ready=true
 python3 "$repo_root/scripts/prepare-ohos-flutter.py"
 
+# AppGallery rejects an App Pack whose versionName+versionCode pair is already in use, so a build
+# that carries a CI run identity derives a fresh, monotonic versionCode for it:
+#
+#   versionCode = 100000000 + UTC-days-since-2020-01-01 * 100000 + run-number * 100 + run-attempt
+#
+# The Flutter tool is the only layer that reaches the packaged App: it stamps this number into
+# local.properties and hvigor's flutter plugin writes it into the App manifest, overwriting both
+# AppScope/app.json5 and anything hvigorfile hooks set themselves. Local builds keep the committed
+# baseline because GITHUB_RUN_NUMBER is absent.
+build_number_arg=()
+if [[ -n "${GITHUB_RUN_NUMBER:-}" ]]; then
+  derived_version_code="$(python3 - <<'PY'
+import datetime
+import os
+
+day = (datetime.datetime.now(datetime.timezone.utc)
+       - datetime.datetime(2020, 1, 1, tzinfo=datetime.timezone.utc)).days
+run_number = int(os.environ['GITHUB_RUN_NUMBER'])
+run_attempt = int(os.environ.get('GITHUB_RUN_ATTEMPT', '1'))
+if not 1 <= run_number <= 999:
+    raise SystemExit(f'GitHub run number {run_number} overflows the per-day sequence')
+if not 1 <= run_attempt <= 99:
+    raise SystemExit(f'GitHub run attempt must be 1..99, got {run_attempt}')
+print(100_000_000 + day * 100_000 + run_number * 100 + run_attempt)
+PY
+)"
+  echo "OHOS App versionCode=$derived_version_code"
+  build_number_arg=(--build-number "$derived_version_code")
+fi
+
 cd "$flutter_root"
-env -u RUSTDESK_SIGNING_DIR flutter build "$package_kind" "--$build_mode" --flavor "$product" "$@"
+env -u RUSTDESK_SIGNING_DIR flutter build "$package_kind" "--$build_mode" --flavor "$product" \
+  ${build_number_arg[@]+"${build_number_arg[@]}"} "$@"
