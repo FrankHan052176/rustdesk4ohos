@@ -417,7 +417,7 @@ class _ConnectionPageState extends State<ConnectionPage>
                     return Obx(() => TextField(
                           autocorrect: false,
                           enableSuggestions: false,
-                          keyboardType: TextInputType.visiblePassword,
+                          keyboardType: plainKeyboardType,
                           focusNode: fieldFocusNode,
                           style: const TextStyle(
                             fontFamily: 'WorkSans',

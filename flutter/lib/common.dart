@@ -71,6 +71,17 @@ final ohosFreeformWindow = ValueNotifier<bool>(false);
 bool get isOhosDesktop =>
     isOhos && (ohosDeviceType == '2in1' || ohosFreeformWindow.value);
 bool get isDesktopUi => isDesktop || isOhosDesktop;
+
+/// HarmonyOS raises the system secure keyboard for [TextInputType.visiblePassword] inputs
+/// only, while Android and iOS raise it from an obscured field and treat the
+/// visible-password type as the plain, suggestion-free one.
+final TextInputType plainKeyboardType =
+    isOhos ? TextInputType.text : TextInputType.visiblePassword;
+
+/// Ask for the HarmonyOS system secure keyboard where the field is a real secret; every
+/// other platform already raises it for an obscured field.
+final TextInputType? secureKeyboardType =
+    isOhos ? TextInputType.visiblePassword : null;
 var version = '';
 int androidVersion = 0;
 

@@ -682,7 +682,7 @@ class DialogEmailCodeField extends ValidationField {
       readyCallback: readyCallback,
       helperText: translate('verification_tip'),
       onChanged: _onChanged,
-      keyboardType: TextInputType.visiblePassword,
+      keyboardType: plainKeyboardType,
     );
   }
 
@@ -819,6 +819,7 @@ class PasswordWidget extends StatefulWidget {
     this.errorText,
     this.title,
     this.maxLength,
+    this.keyboardType,
   }) : super(key: key);
 
   final TextEditingController controller;
@@ -828,6 +829,7 @@ class PasswordWidget extends StatefulWidget {
   final String? errorText;
   final String? title;
   final int? maxLength;
+  final TextInputType? keyboardType;
 
   @override
   State<PasswordWidget> createState() => _PasswordWidgetState();
@@ -891,6 +893,7 @@ class _PasswordWidgetState extends State<PasswordWidget> {
       errorText: widget.errorText,
       focusNode: _focusNode,
       maxLength: widget.maxLength,
+      keyboardType: widget.keyboardType,
     );
   }
 }

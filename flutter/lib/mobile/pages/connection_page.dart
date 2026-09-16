@@ -225,7 +225,7 @@ class _ConnectionPageState extends State<ConnectionPage> {
                         minFontSize: 18,
                         autocorrect: false,
                         enableSuggestions: false,
-                        keyboardType: TextInputType.visiblePassword,
+                        keyboardType: plainKeyboardType,
                         // keyboardType: TextInputType.number,
                         onChanged: (String text) {
                           _idController.id = text;
