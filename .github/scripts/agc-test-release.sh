@@ -325,13 +325,16 @@ poll_attempts="${AGC_POLL_ATTEMPTS:-30}"
 poll_seconds="${AGC_POLL_SECONDS:-20}"
 wait_for_package "$release_package_id"
 
-file_info_response=$(curl --silent --show-error --fail-with-body \
-  --request PUT "$api_base/publish/v3/app-file-info?appId=$app_id_q" \
-  "${api_headers[@]}" \
-  --data "$(jq -cn \
-    --argjson permission_intro_videos "$permission_intro_videos" \
-    '{packagePermissionIntroVideoList: $permission_intro_videos}')")
-check_ret "$file_info_response"
+if [[ -n "$AGC_PERMISSION_VIDEO_FILE" ]]; then
+  # Binds the ACL permission's introduction video; without a video there is nothing to update.
+  file_info_response=$(curl --silent --show-error --fail-with-body \
+    --request PUT "$api_base/publish/v3/app-file-info?appId=$app_id_q" \
+    "${api_headers[@]}" \
+    --data "$(jq -cn \
+      --argjson permission_intro_videos "$permission_intro_videos" \
+      '{packagePermissionIntroVideoList: $permission_intro_videos}')")
+  check_ret "$file_info_response"
+fi
 
 group_infos=$(fetch_group_infos)
 group_count=$(jq -er 'length' <<<"$group_infos")
