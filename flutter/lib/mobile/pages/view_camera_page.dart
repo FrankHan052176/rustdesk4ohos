@@ -323,7 +323,7 @@ class _ViewCameraPageState extends State<ViewCameraPage>
                       },
                     )
                   ] +
-                  (isWeb
+                  (isWeb || !isTextChatSupported
                       ? []
                       : <Widget>[
                           futureBuilder(

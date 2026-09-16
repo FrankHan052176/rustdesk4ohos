@@ -558,7 +558,8 @@ class _CmHeaderState extends State<_CmHeader>
             offstage: !client.authorized ||
                 (client.type_() != ClientType.remote &&
                     client.type_() != ClientType.file &&
-                    client.type_() != ClientType.camera),
+                    client.type_() != ClientType.camera) ||
+                (!isTextChatSupported && client.type_() != ClientType.file),
             child: IconButton(
               onPressed: () => checkClickTime(client.id, () {
                 if (client.type_() == ClientType.file) {

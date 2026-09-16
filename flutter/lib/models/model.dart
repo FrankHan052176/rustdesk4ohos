@@ -379,10 +379,10 @@ class FfiModel with ChangeNotifier {
         }
       } else if (name == 'permission') {
         updatePermission(evt, peerId);
-      } else if (name == 'chat_client_mode') {
+      } else if (name == 'chat_client_mode' && isTextChatSupported) {
         parent.target?.chatModel
             .receive(ChatModel.clientModeID, evt['text'] ?? '');
-      } else if (name == 'chat_server_mode') {
+      } else if (name == 'chat_server_mode' && isTextChatSupported) {
         parent.target?.chatModel
             .receive(int.parse(evt['id'] as String), evt['text'] ?? '');
       } else if (name == 'terminal_response') {

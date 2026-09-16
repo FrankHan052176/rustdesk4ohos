@@ -82,6 +82,10 @@ final TextInputType plainKeyboardType =
 /// other platform already raises it for an obscured field.
 final TextInputType? secureKeyboardType =
     isOhos ? TextInputType.visiblePassword : null;
+
+/// HarmonyOS ships without the text chat: no entry point anywhere, and incoming chat
+/// messages are dropped instead of being surfaced.
+final isTextChatSupported = !isOhos;
 var version = '';
 int androidVersion = 0;
 

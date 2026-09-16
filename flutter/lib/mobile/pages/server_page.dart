@@ -694,7 +694,9 @@ class ConnectionManager extends StatelessWidget {
                       Expanded(child: ClientInfo(client)),
                       Expanded(
                           flex: -1,
-                          child: client.isFileTransfer || !client.authorized
+                          child: client.isFileTransfer ||
+                                  !client.authorized ||
+                                  !isTextChatSupported
                               ? const SizedBox.shrink()
                               : IconButton(
                                   onPressed: () {
