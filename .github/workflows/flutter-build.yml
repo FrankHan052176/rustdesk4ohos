@@ -57,6 +57,20 @@ env:
   SIGN_BASE_URL: "${{ secrets.SIGN_BASE_URL }}-2"
 
 jobs:
+  # The committed pubspec feeds every leg; only prepare-ohos-flutter.py may rewrite it, and
+  # only inside the OHOS leg's throwaway checkout. Fail fast when its output got committed
+  # and the other legs can no longer compile the HarmonyOS-only dependencies.
+  verify-dependency-state:
+    name: Verify the committed dependency state
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Verify the dependency selection
+        shell: bash
+        run: |
+          python3 scripts/test_prepare_ohos_flutter.py
+          python3 scripts/prepare-ohos-flutter.py --check
+
   generate-sbom:
     runs-on: ubuntu-latest
 

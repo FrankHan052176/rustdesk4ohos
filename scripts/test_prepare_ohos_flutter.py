@@ -42,6 +42,21 @@ class DependencyPreparationTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'xterm'):
             PREPARE.prepare(BASE.replace(standard, '0' * 40))
 
+    def test_check_rejects_a_prepared_manifest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            pubspec = Path(directory) / 'pubspec.yaml'
+            command = [sys.executable, str(ROOT / 'scripts/prepare-ohos-flutter.py'),
+                       '--pubspec', str(pubspec), '--check']
+            pubspec.write_text(BASE)
+            standard = subprocess.run(command, capture_output=True, text=True, timeout=10)
+            self.assertEqual(standard.returncode, 0, standard.stderr)
+            self.assertEqual(pubspec.read_text(), BASE)
+            pubspec.write_text(PREPARE.prepare(BASE))
+            prepared = subprocess.run(command, capture_output=True, text=True, timeout=10)
+            self.assertNotEqual(prepared.returncode, 0)
+            self.assertIn('already prepared', prepared.stderr)
+            self.assertEqual(pubspec.read_text(), PREPARE.prepare(BASE))
+
     def test_rejects_missing_or_unknown_font_dependency(self):
         for dependency in ('', '  google_fonts: ^9.0.0\n'):
             with self.subTest(dependency=dependency):

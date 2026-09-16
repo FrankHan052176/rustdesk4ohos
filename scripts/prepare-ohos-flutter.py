@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Select Flutter-OH dependencies without changing standard Flutter builds."""
+"""Select Flutter-OH dependencies without changing standard Flutter builds.
+
+--check asserts the reverse: the committed pubspec still selects the standard
+dependencies, so every leg that consumes it unchanged keeps compiling.
+"""
 
 import argparse
 import re
@@ -47,12 +51,20 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--pubspec', type=Path,
                         default=Path(__file__).resolve().parents[1] / 'flutter/pubspec.yaml')
+    parser.add_argument('--check', action='store_true',
+                        help='fail if the committed pubspec is already prepared for Flutter-OH')
     args = parser.parse_args()
     source = args.pubspec.read_text(encoding='utf-8')
     try:
         patched = prepare(source)
     except ValueError as error:
         parser.exit(1, f'{error}; pubspec was not changed\n')
+    if args.check:
+        if patched == source:
+            parser.exit(1, 'The committed pubspec is already prepared for Flutter-OH; '
+                           'keep the standard dependencies committed\n')
+        print('The committed pubspec selects the standard dependencies.')
+        return
     if patched != source:
         args.pubspec.write_text(patched, encoding='utf-8')
     print('Flutter-OH dependency constraints are ready.')
