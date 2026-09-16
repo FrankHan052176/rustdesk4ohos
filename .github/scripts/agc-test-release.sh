@@ -7,18 +7,12 @@ set -euo pipefail
 
 AGC_API_DOMAIN="${AGC_API_DOMAIN:-connect-api.cloud.huawei.com}"
 AGC_APP_FILE="${1:-${AGC_APP_FILE:-}}"
-AGC_PERMISSION_VIDEO_FILE="${AGC_PERMISSION_VIDEO_FILE:-}"
 AGC_RESULT_FILE="${AGC_RESULT_FILE:-}"
 app_object_id=""
-video_object_id=""
 release_package_id=""
 version_id=""
 if [[ -z "$AGC_APP_FILE" || ! -f "$AGC_APP_FILE" ]]; then
   echo "Signed App file is missing." >&2
-  exit 1
-fi
-if [[ -n "$AGC_PERMISSION_VIDEO_FILE" && ! -f "$AGC_PERMISSION_VIDEO_FILE" ]]; then
-  echo "Permission introduction video is missing: $AGC_PERMISSION_VIDEO_FILE" >&2
   exit 1
 fi
 
@@ -219,12 +213,10 @@ write_result() {
     --arg version_id "$version_id" \
     --arg release_package_id "$release_package_id" \
     --arg app_object_id "$app_object_id" \
-    --arg video_object_id "$video_object_id" \
     '{
       versionId: $version_id,
       releasePackageId: $release_package_id,
       appObjectId: $app_object_id,
-      permissionVideoObjectId: $video_object_id
     }' > "$AGC_RESULT_FILE"
   chmod 600 "$AGC_RESULT_FILE"
 }
@@ -297,23 +289,7 @@ fi
 fetch_group_infos >/dev/null
 app_name=$(basename "$AGC_APP_FILE")
 app_object_id=$(upload_file "$AGC_APP_FILE")
-if [[ -n "$AGC_PERMISSION_VIDEO_FILE" ]]; then
-  video_object_id=$(upload_file "$AGC_PERMISSION_VIDEO_FILE")
-  permission_intro_videos=$(jq -cn \
-    --arg permission_name "${AGC_PERMISSION_NAME:-ohos.permission.INTERCEPT_INPUT_EVENT}" \
-    --arg video_object_id "$video_object_id" \
-    '[
-      {lang: "zh-CN", permissionName: $permission_name, deviceType: 4, objectId: $video_object_id},
-      {lang: "zh-CN", permissionName: $permission_name, deviceType: 5, objectId: $video_object_id},
-      {lang: "zh-CN", permissionName: $permission_name, deviceType: 19, objectId: $video_object_id}
-    ]')
-else
-  # This app declares no ACL permission, so AGC needs no introduction video.
-  video_object_id=""
-  permission_intro_videos='[]'
-fi
 write_output agc_app_object_id "$app_object_id"
-write_output agc_video_object_id "$video_object_id"
 write_result
 
 release_package_id=$(add_package 2)
@@ -325,16 +301,6 @@ poll_attempts="${AGC_POLL_ATTEMPTS:-30}"
 poll_seconds="${AGC_POLL_SECONDS:-20}"
 wait_for_package "$release_package_id"
 
-if [[ -n "$AGC_PERMISSION_VIDEO_FILE" ]]; then
-  # Binds the ACL permission's introduction video; without a video there is nothing to update.
-  file_info_response=$(curl --silent --show-error --fail-with-body \
-    --request PUT "$api_base/publish/v3/app-file-info?appId=$app_id_q" \
-    "${api_headers[@]}" \
-    --data "$(jq -cn \
-      --argjson permission_intro_videos "$permission_intro_videos" \
-      '{packagePermissionIntroVideoList: $permission_intro_videos}')")
-  check_ret "$file_info_response"
-fi
 
 group_infos=$(fetch_group_infos)
 group_count=$(jq -er 'length' <<<"$group_infos")
@@ -358,7 +324,6 @@ update_response=$(curl --silent --show-error --fail-with-body \
     --arg version_id "$version_id" \
     --arg package_id "$release_package_id" \
     --arg desc "$test_desc" \
-    --argjson permission_intro_videos "$permission_intro_videos" \
     --argjson start_time "$start_time" \
     --argjson end_time "$end_time" \
     --argjson group_infos "$group_infos" \
@@ -366,7 +331,6 @@ update_response=$(curl --silent --show-error --fail-with-body \
     '{
       versionId: $version_id,
       pkgId: $package_id,
-      packagePermissionIntroVideoList: $permission_intro_videos,
       openTestInfo: {
         startTime: $start_time,
         endTime: $end_time,
