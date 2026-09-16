@@ -79,11 +79,21 @@ jobs:
         with:
           prefix-key: flutter-ohos-macos
 
+      # The SDK clone and its engine artifacts come from a Huawei-hosted CDN that has timed
+      # out three times on these runners in one day; reuse them across runs.
+      - name: Restore the Flutter-OH SDK
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ runner.temp }}/flutter-ohos
+          key: flutter-ohos-${{ env.FLUTTER_OH_VERSION }}
+
       - name: Install Flutter-OH and bridge generator
         shell: bash
         run: |
-          git clone --depth 1 --branch "$FLUTTER_OH_VERSION" \
-            https://gitcode.com/CPF-Flutter/flutter_flutter.git "$RUNNER_TEMP/flutter-ohos"
+          if [[ ! -x "$RUNNER_TEMP/flutter-ohos/bin/flutter" ]]; then
+            git clone --depth 1 --branch "$FLUTTER_OH_VERSION" \
+              https://gitcode.com/CPF-Flutter/flutter_flutter.git "$RUNNER_TEMP/flutter-ohos"
+          fi
           echo "$RUNNER_TEMP/flutter-ohos/bin" >> "$GITHUB_PATH"
           "$RUNNER_TEMP/flutter-ohos/bin/flutter" config --no-analytics
           cargo install flutter_rust_bridge_codegen \
