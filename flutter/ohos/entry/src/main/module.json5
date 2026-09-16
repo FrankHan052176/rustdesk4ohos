@@ -23,7 +23,7 @@
         "startWindowIcon": "$media:icon",
         "startWindowBackground": "$color:start_window_background",
         "launchType": "singleton",
-        "orientation": "auto_rotation",
+        "orientation": "auto_rotation_restricted",
         "minWindowWidth": 640,
         "minWindowHeight": 480,
         "backgroundModes": [
@@ -51,7 +51,7 @@
         "startWindowIcon": "$media:icon",
         "startWindowBackground": "$color:start_window_background",
         "launchType": "multiton",
-        "orientation": "auto_rotation",
+        "orientation": "auto_rotation_restricted",
         "minWindowWidth": 640,
         "minWindowHeight": 480,
         "exported": false
