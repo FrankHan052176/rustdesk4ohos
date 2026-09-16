@@ -184,6 +184,16 @@ jobs:
 
           cp "$signed_app" "rustdesk-$VERSION-ohos-arm64.app"
 
+      - name: Stage the unsigned OpenHarmony HAP
+        shell: bash
+        run: |
+          unsigned_hap="$(find flutter/ohos -type f -name '*-unsigned.hap' 2>/dev/null | head -n 1)"
+          if [[ -z "$unsigned_hap" || ! -s "$unsigned_hap" ]]; then
+            echo "The packaging run produced no unsigned HAP." >&2
+            exit 1
+          fi
+          cp "$unsigned_hap" "rustdesk-$VERSION-ohos-arm64-unsigned.hap"
+
       - name: Upload OHOS Flutter bridge
         if: ${{ inputs.upload-artifact }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -223,13 +233,15 @@ jobs:
         run: |
           bash .github/scripts/agc-test-release.sh "rustdesk-$VERSION-ohos-arm64.app"
 
-      - name: Publish Flutter OpenHarmony APP
+      # The release carries the unsigned HAP so a user can sign it themselves; the
+      # publish-signed App Pack stays in the workflow artifacts and in AppGallery Connect.
+      - name: Publish Flutter OpenHarmony HAP
         if: ${{ inputs.publish-release }}
         uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
         with:
           prerelease: true
           tag_name: ${{ inputs.upload-tag }}
-          files: rustdesk-${{ env.VERSION }}-ohos-arm64.app
+          files: rustdesk-${{ env.VERSION }}-ohos-arm64-unsigned.hap
 
       - name: Remove OHOS release signing material
         if: always()
