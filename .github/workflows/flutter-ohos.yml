@@ -194,22 +194,12 @@ jobs:
           fi
           cp "$unsigned_hap" "rustdesk-$VERSION-ohos-arm64-unsigned.hap"
 
-      - name: Upload OHOS Flutter bridge
+      - name: Upload Flutter OpenHarmony HAP
         if: ${{ inputs.upload-artifact }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: rustdesk-ohos-flutter-bridge-aarch64
-          path: flutter/ohos/entry/libs/arm64-v8a/liblibrustdesk.so
-          if-no-files-found: error
-          compression-level: 0
-          retention-days: 14
-
-      - name: Upload Flutter OpenHarmony APP
-        if: ${{ inputs.upload-artifact }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: rustdesk-flutter-ohos-app
-          path: rustdesk-${{ env.VERSION }}-ohos-arm64.app
+          name: rustdesk-flutter-ohos-hap
+          path: rustdesk-${{ env.VERSION }}-ohos-arm64-unsigned.hap
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
