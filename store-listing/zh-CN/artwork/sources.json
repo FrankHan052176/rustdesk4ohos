@@ -67,64 +67,64 @@
       "file": "exports/phone-quality.png",
       "width": 1080,
       "height": 1920,
-      "bytes": 535552,
-      "sha256": "5541c081b8b23197d86b7ffda9e62aae5307b618db9fcafa2b3bd0187ee41d85"
+      "bytes": 613724,
+      "sha256": "d253354969ec9cfa311d9911143b0375f9a4f6a228079514191a3557e4fab5a5"
     },
     {
       "file": "exports/phone-keyboard.png",
       "width": 1080,
       "height": 1920,
-      "bytes": 581559,
-      "sha256": "c4f5ee224d4dc98a98ee8a65710f3538690dc357be713bb236daaa101e3b2b2f"
+      "bytes": 668545,
+      "sha256": "c5f95c572f29a9c3022a2ad9bae1b1dd0789eeaa2150269f5f695c6c6affc487"
     },
     {
       "file": "exports/phone-pointer.png",
       "width": 1080,
       "height": 1920,
-      "bytes": 341222,
-      "sha256": "5e263e4a7a743b88db5bae190cf8911d11f2cd5a54605b3764b1ad7392843400"
+      "bytes": 452354,
+      "sha256": "dfd2a511727cf8f72379e531ac3d67558e2e90b3334804911c76792b788ec0cf"
     },
     {
       "file": "exports/tablet-quality.png",
       "width": 1920,
       "height": 1280,
-      "bytes": 359047,
-      "sha256": "3380aa245f936804ecc37858ebab9abfdc6515fd84727421df994f396bb7f7b2"
+      "bytes": 401042,
+      "sha256": "cb929be4a2cfc6fcd214dd46046e56c46014000f57dcb62e27e018ddbfd3d4fc"
     },
     {
       "file": "exports/tablet-keyboard.png",
       "width": 1920,
       "height": 1280,
-      "bytes": 327039,
-      "sha256": "2eb7365aeb8b34c6ec07a55dd7cc7e0c3c444e7486b0e3fc7c0658c1a4adcfd2"
+      "bytes": 394562,
+      "sha256": "d016e6211cb0b23d01dd4d4726a5c166fc74d3d3f0ee0423fc61fa2073b748af"
     },
     {
       "file": "exports/tablet-pointer.png",
       "width": 1920,
       "height": 1280,
-      "bytes": 467921,
-      "sha256": "fd856a7d38e3568b1b5ff2068964e1b4609b40b523b2cf9a0e78e97540390fc8"
+      "bytes": 502731,
+      "sha256": "1c9d53b70e83d9c912e346c8403d543766a521923a7ba50126813216a0e1914a"
     },
     {
       "file": "exports/landscape-quality.png",
       "width": 1920,
       "height": 1080,
-      "bytes": 329187,
-      "sha256": "f21c66c907343c03b37e2b6c51fec534846bc7f56a94a1f58459d5d2fa18c61d"
+      "bytes": 329472,
+      "sha256": "a42a6e9e0eadc5ae9a6e32039c7776fa5b4d24e1ab5eb721ca4f445d86a11722"
     },
     {
       "file": "exports/landscape-keyboard.png",
       "width": 1920,
       "height": 1080,
-      "bytes": 305531,
-      "sha256": "bc515afa20ae239a9cc89a87cf34f203103f938ef9ca161e679599c70fe426c8"
+      "bytes": 334453,
+      "sha256": "6c47cf76b708c9259e1466d79cf01e3cf5f3a1e0012e9c861003fea3051a338a"
     },
     {
       "file": "exports/landscape-pointer.png",
       "width": 1920,
       "height": 1080,
-      "bytes": 409921,
-      "sha256": "e02df35f795274ed3b903164166ac8d582134c4276074758ae90ad256ff1b07b"
+      "bytes": 378682,
+      "sha256": "eb57570c95d37b772dac290ca3b44f4cd33191116aa1e62467f5ec3a37a68489"
     },
     {
       "file": "exports/app-icon-1024.png",

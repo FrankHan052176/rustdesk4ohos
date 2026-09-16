@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>RustDesk · 宣传图总览</title>
+  <style>
+    :root { font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif; color-scheme: light; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; }
+    body { width: 1600px; height: 1880px; background: #eef3f9; color: #0b1220; }
+    .sheet { width: 1600px; height: 1880px; padding: 54px 60px 44px; display: flex; flex-direction: column; gap: 26px; }
+    .head { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; }
+    .brand { display: flex; align-items: center; gap: 16px; font-size: 34px; font-weight: 680; letter-spacing: -.04em; }
+    .brand img { width: 40px; height: 40px; }
+    .sub { font-size: 17px; color: #44576f; letter-spacing: .02em; }
+    .row { display: flex; flex-direction: column; gap: 12px; }
+    .row-head { display: flex; align-items: baseline; gap: 14px; }
+    .row-head b { font-size: 19px; font-weight: 650; }
+    .row-head span { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 15px; color: #0b63f6; }
+    .row-head i { flex: 1; height: 1px; background: #ccd8e8; }
+    .thumbs { display: flex; gap: 22px; }
+    figure { margin: 0; display: flex; flex-direction: column; gap: 8px; }
+    img { display: block; width: 470px; height: auto; border: 1px solid #dbe4f0; background: #fff; }
+    figcaption { font-size: 14px; color: #44576f; }
+    footer { margin-top: auto; padding-top: 18px; border-top: 1px solid #ccd8e8; font-size: 14px; color: #44576f; }
+  </style>
+</head>
+<body>
+  <div class="sheet">
+    <div class="head">
+      <div class="brand"><img src="assets/rustdesk-logo.svg" alt="">RustDesk</div>
+      <div class="sub">鸿蒙远程桌面客户端 · 商店宣传图总览 · 三种精确画幅</div>
+    </div>
+    <section class="row">
+      <div class="row-head"><b>手机竖屏</b><span>1080 × 1920 px</span><i></i></div>
+      <div class="thumbs">
+        <figure><img src="exports/phone-quality.png" alt="手机竖屏 · 显示与画质"><figcaption>01 显示与画质</figcaption></figure>
+        <figure><img src="exports/phone-keyboard.png" alt="手机竖屏 · 远程键盘"><figcaption>02 远程键盘</figcaption></figure>
+        <figure><img src="exports/phone-pointer.png" alt="手机竖屏 · 指针与触控"><figcaption>03 指针与触控</figcaption></figure>
+      </div>
+    </section>
+    <section class="row">
+      <div class="row-head"><b>平板</b><span>1920 × 1280 px</span><i></i></div>
+      <div class="thumbs">
+        <figure><img src="exports/tablet-quality.png" alt="平板 · 显示与画质"><figcaption>01 显示与画质</figcaption></figure>
+        <figure><img src="exports/tablet-keyboard.png" alt="平板 · 远程键盘"><figcaption>02 远程键盘</figcaption></figure>
+        <figure><img src="exports/tablet-pointer.png" alt="平板 · 指针与触控"><figcaption>03 指针与触控</figcaption></figure>
+      </div>
+    </section>
+    <section class="row">
+      <div class="row-head"><b>横屏</b><span>1920 × 1080 px</span><i></i></div>
+      <div class="thumbs">
+        <figure><img src="exports/landscape-quality.png" alt="横屏 · 显示与画质"><figcaption>01 显示与画质</figcaption></figure>
+        <figure><img src="exports/landscape-keyboard.png" alt="横屏 · 远程键盘"><figcaption>02 远程键盘</figcaption></figure>
+        <figure><img src="exports/landscape-pointer.png" alt="横屏 · 指针与触控"><figcaption>03 指针与触控</figcaption></figure>
+      </div>
+    </section>
+    <footer>图片来源：上游历史客户端截图；宣传画布仅排版，未重画、未裁切软件界面。</footer>
+  </div>
+</body>
+</html>
