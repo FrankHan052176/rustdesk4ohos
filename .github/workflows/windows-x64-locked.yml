@@ -11,8 +11,10 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  SOURCE_SHA: 1b9156ed4c85f909c246b581239874b64a054003
+  SOURCE_SHA: b98107875088b1ce8636df87deaa7193e9e9a91d
+  SOURCE_BASE_SHA: 1b9156ed4c85f909c246b581239874b64a054003
   HBB_COMMON_SHA: ccd79bea6326733c8b7c85cf9dabaab8f9b43978
+  PUBSPEC_LOCK_BLOB_SHA: 12f067b5088ebb7c9b775d2bdf19f6885d3b93a8
   FLUTTER_VERSION: 3.38.10
   FLUTTER_DART_VERSION: 3.10.9
   FLUTTER_ARCHIVE: stable/windows/flutter_windows_3.38.10-stable.zip
@@ -50,6 +52,8 @@ jobs:
           git submodule status --recursive
           git diff --exit-code
           $pubLock = (Get-FileHash flutter/pubspec.lock -Algorithm SHA256).Hash.ToLowerInvariant()
+          $pubLockBlob = (git hash-object flutter/pubspec.lock).Trim()
+          if ($pubLockBlob -ne $env:PUBSPEC_LOCK_BLOB_SHA) { throw "Unexpected flutter/pubspec.lock Git blob: $pubLockBlob" }
           $cargoLock = (Get-FileHash Cargo.lock -Algorithm SHA256).Hash.ToLowerInvariant()
           "PUBSPEC_LOCK_SHA_BEFORE=$pubLock" >> $env:GITHUB_ENV
           "CARGO_LOCK_SHA_BEFORE=$cargoLock" >> $env:GITHUB_ENV
@@ -236,6 +240,7 @@ jobs:
             provenance_version = 1
             repository = 'FrankHan052176/rustdesk4ohos'
             source_commit = (git rev-parse HEAD).Trim()
+            reconciliation_base_commit = $env:SOURCE_BASE_SHA
             hbb_common_commit = (git -C libs/hbb_common rev-parse HEAD).Trim()
             workflow_commit = $env:GITHUB_SHA
             run = [ordered]@{
@@ -261,6 +266,8 @@ jobs:
               triplet = 'x64-windows-static'
               pubspec_lock_sha256_before = $env:PUBSPEC_LOCK_SHA_BEFORE
               pubspec_lock_sha256_after = (Get-FileHash flutter/pubspec.lock -Algorithm SHA256).Hash.ToLowerInvariant()
+              pubspec_lock_git_blob_expected = $env:PUBSPEC_LOCK_BLOB_SHA
+              pubspec_lock_git_blob_actual = (git hash-object flutter/pubspec.lock).Trim()
               cargo_lock_sha256_before = $env:CARGO_LOCK_SHA_BEFORE
               cargo_lock_sha256_after = (Get-FileHash Cargo.lock -Algorithm SHA256).Hash.ToLowerInvariant()
             }
