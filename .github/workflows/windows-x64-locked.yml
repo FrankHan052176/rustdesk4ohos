@@ -104,6 +104,7 @@ jobs:
         with:
           toolchain: ${{ env.RUST_VERSION }}
           targets: x86_64-pc-windows-msvc
+          components: rustfmt
 
       - name: Pin MSVC linker selection
         shell: pwsh
@@ -129,6 +130,7 @@ jobs:
           cargo -V
           Push-Location flutter
           flutter pub get --enforce-lockfile
+          if ($LASTEXITCODE -ne 0) { throw 'Locked Dart dependency verification failed.' }
           Pop-Location
           $pubLock = (Get-FileHash flutter/pubspec.lock -Algorithm SHA256).Hash.ToLowerInvariant()
           if ($pubLock -ne $env:PUBSPEC_LOCK_SHA_BEFORE) {
@@ -145,6 +147,7 @@ jobs:
           cargo install cargo-expand --version $env:CARGO_EXPAND_VERSION --locked
           cargo install flutter_rust_bridge_codegen --version $env:FLUTTER_RUST_BRIDGE_VERSION --features uuid --locked
           flutter_rust_bridge_codegen --rust-input ./src/flutter_ffi.rs --dart-output ./flutter/lib/generated_bridge.dart --c-output ./flutter/macos/Runner/bridge_generated.h
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned Flutter Rust Bridge generation failed.' }
           $required = @(
             'src/bridge_generated.rs',
             'src/bridge_generated.io.rs',
