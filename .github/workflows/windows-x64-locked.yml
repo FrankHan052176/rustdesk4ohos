@@ -1,0 +1,295 @@
+name: Windows x64 locked unsigned
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-x64-locked-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  SOURCE_SHA: 1b9156ed4c85f909c246b581239874b64a054003
+  HBB_COMMON_SHA: ccd79bea6326733c8b7c85cf9dabaab8f9b43978
+  FLUTTER_VERSION: 3.38.10
+  FLUTTER_DART_VERSION: 3.10.9
+  FLUTTER_ARCHIVE: stable/windows/flutter_windows_3.38.10-stable.zip
+  FLUTTER_ARCHIVE_SHA256: 97e560d028f1b0b414e5f19ac2c4ebf079c001e8a18563a0e940c4d84700d334
+  RUST_VERSION: 1.75
+  CARGO_EXPAND_VERSION: 1.0.95
+  FLUTTER_RUST_BRIDGE_VERSION: 1.80.1
+  LLVM_VERSION: 15.0.6
+  VCPKG_COMMIT: 9e593bb18ea69cc5095e012465dcd675a822ed0d
+  VCPKG_DEFAULT_TRIPLET: x64-windows-static
+  VCPKG_DEFAULT_HOST_TRIPLET: x64-windows-static
+  VCPKG_BINARY_SOURCES: clear;x-gha,readwrite
+  CARGO_TERM_COLOR: never
+
+jobs:
+  build-windows-x64:
+    runs-on: windows-2022
+    timeout-minutes: 180
+    steps:
+      - name: Checkout pinned source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Verify pinned source and dependency state
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $source = (git rev-parse HEAD).Trim()
+          if ($source -ne $env:SOURCE_SHA) { throw "Expected source $env:SOURCE_SHA, got $source" }
+          $hbb = (git -C libs/hbb_common rev-parse HEAD).Trim()
+          if ($hbb -ne $env:HBB_COMMON_SHA) { throw "Expected hbb_common $env:HBB_COMMON_SHA, got $hbb" }
+          git submodule status --recursive
+          git diff --exit-code
+          $pubLock = (Get-FileHash flutter/pubspec.lock -Algorithm SHA256).Hash.ToLowerInvariant()
+          $cargoLock = (Get-FileHash Cargo.lock -Algorithm SHA256).Hash.ToLowerInvariant()
+          "PUBSPEC_LOCK_SHA_BEFORE=$pubLock" >> $env:GITHUB_ENV
+          "CARGO_LOCK_SHA_BEFORE=$cargoLock" >> $env:GITHUB_ENV
+          if (-not (Select-String -Path flutter/pubspec.lock -Pattern 'flutter: ">=3\.38\.0"' -Quiet)) {
+            throw 'The committed Flutter lockfile does not state Flutter >=3.38.0.'
+          }
+          if (-not (Select-String -Path .cargo/config.toml -Pattern 'target\.x86_64-pc-windows-msvc' -Quiet) -or -not (Select-String -Path .cargo/config.toml -Pattern 'crt-static' -Quiet)) {
+            throw 'Static Windows CRT configuration is missing.'
+          }
+
+      - name: Install exact official Flutter SDK
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $archive = Join-Path $env:RUNNER_TEMP 'flutter-windows.zip'
+          $uri = "https://storage.googleapis.com/flutter_infra_release/releases/$env:FLUTTER_ARCHIVE"
+          Invoke-WebRequest -Uri $uri -OutFile $archive
+          $actual = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $env:FLUTTER_ARCHIVE_SHA256) {
+            throw "Flutter archive SHA-256 mismatch: $actual"
+          }
+          Expand-Archive -Path $archive -DestinationPath $env:RUNNER_TEMP
+          $flutterRoot = Join-Path $env:RUNNER_TEMP 'flutter'
+          if (-not (Test-Path "$flutterRoot\bin\flutter.bat" -PathType Leaf)) {
+            throw 'Flutter archive did not contain flutter/bin/flutter.bat.'
+          }
+          "$flutterRoot\bin" >> $env:GITHUB_PATH
+          "FLUTTER_ROOT=$flutterRoot" >> $env:GITHUB_ENV
+          & "$flutterRoot\bin\flutter.bat" config --no-analytics
+          $version = (& "$flutterRoot\bin\flutter.bat" --version 2>&1 | Out-String)
+          Write-Host $version
+          if ($version -notmatch "Flutter $([regex]::Escape($env:FLUTTER_VERSION))") {
+            throw 'Installed Flutter version differs from the pinned release.'
+          }
+          if ($version -notmatch "Dart $([regex]::Escape($env:FLUTTER_DART_VERSION))") {
+            throw 'Installed Dart version differs from the pinned release.'
+          }
+          & "$flutterRoot\bin\flutter.bat" precache --windows
+
+      - name: Install MSVC, LLVM, and Rust prerequisites
+        uses: microsoft/setup-msbuild@6fb02220983dee41ce7ae257b6f4d8f9bf5ed4ce
+
+      - uses: KyleMayes/install-llvm-action@ebc0426251bc40c7cd31162802432c68818ab8f0
+        with:
+          version: ${{ env.LLVM_VERSION }}
+
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: x86_64-pc-windows-msvc
+
+      - name: Pin MSVC linker selection
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsRoot = (& $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath).Trim()
+          if ([string]::IsNullOrWhiteSpace($vsRoot)) { throw 'No Visual Studio C++ toolchain was found.' }
+          $toolset = Get-ChildItem (Join-Path $vsRoot 'VC\Tools\MSVC') -Directory | Sort-Object Name -Descending | Select-Object -First 1
+          if ($null -eq $toolset) { throw 'No MSVC toolset directory was found.' }
+          $linker = Join-Path $toolset.FullName 'bin\Hostx64\x64\link.exe'
+          if (-not (Test-Path $linker -PathType Leaf)) { throw "MSVC linker not found: $linker" }
+          "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$linker" >> $env:GITHUB_ENV
+          "MSVC_LINKER=$linker" >> $env:GITHUB_ENV
+          (Split-Path $linker -Parent) >> $env:GITHUB_PATH
+      - name: Verify toolchains and resolve locked Dart dependencies
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          flutter --version
+          dart --version
+          rustc -Vv
+          cargo -V
+          Push-Location flutter
+          flutter pub get --enforce-lockfile
+          Pop-Location
+          $pubLock = (Get-FileHash flutter/pubspec.lock -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($pubLock -ne $env:PUBSPEC_LOCK_SHA_BEFORE) {
+            throw 'flutter pub get changed the committed dependency lockfile.'
+          }
+
+      - name: Install pinned FRB generator
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $libclang = Get-ChildItem -Path $env:LLVM_PATH -Filter libclang.dll -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($null -eq $libclang) { throw 'libclang.dll was not provided by the pinned LLVM installation.' }
+          "LIBCLANG_PATH=$($libclang.DirectoryName)" >> $env:GITHUB_ENV
+          cargo install cargo-expand --version $env:CARGO_EXPAND_VERSION --locked
+          cargo install flutter_rust_bridge_codegen --version $env:FLUTTER_RUST_BRIDGE_VERSION --features uuid --locked
+          flutter_rust_bridge_codegen --rust-input ./src/flutter_ffi.rs --dart-output ./flutter/lib/generated_bridge.dart --c-output ./flutter/macos/Runner/bridge_generated.h
+          $required = @(
+            'src/bridge_generated.rs',
+            'src/bridge_generated.io.rs',
+            'flutter/lib/generated_bridge.dart',
+            'flutter/lib/generated_bridge.freezed.dart'
+          )
+          foreach ($path in $required) {
+            if (-not (Test-Path $path -PathType Leaf) -or (Get-Item $path).Length -eq 0) {
+              throw "Required generated bridge output is missing: $path"
+            }
+          }
+          $pubLock = (Get-FileHash flutter/pubspec.lock -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($pubLock -ne $env:PUBSPEC_LOCK_SHA_BEFORE) {
+            throw 'FRB generation changed the committed dependency lockfile.'
+          }
+
+      - name: Install pinned static vcpkg dependencies
+        uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2
+        with:
+          vcpkgDirectory: C:\vcpkg
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT }}
+          doNotCache: false
+
+      - name: Verify and install static native dependencies
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vcpkgRoot = 'C:\vcpkg'
+          if (-not (Test-Path "$vcpkgRoot\vcpkg.exe" -PathType Leaf)) { throw 'Pinned vcpkg executable was not installed.' }
+          $vcpkgCommit = (git -C $vcpkgRoot rev-parse HEAD).Trim()
+          if ($vcpkgCommit -ne $env:VCPKG_COMMIT) { throw "Expected vcpkg $env:VCPKG_COMMIT, got $vcpkgCommit" }
+          "VCPKG_ROOT=$vcpkgRoot" >> $env:GITHUB_ENV
+          & "$vcpkgRoot\vcpkg.exe" install --triplet x64-windows-static --x-install-root="$vcpkgRoot\installed"
+          if ($LASTEXITCODE -ne 0) { throw 'Static vcpkg dependency installation failed.' }
+
+      - name: Build locked Windows x64 Flutter runtime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python build.py --portable --flutter --skip-portable-pack --hwcodec --vram
+          $pubLock = (Get-FileHash flutter/pubspec.lock -Algorithm SHA256).Hash.ToLowerInvariant()
+          $cargoLock = (Get-FileHash Cargo.lock -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($pubLock -ne $env:PUBSPEC_LOCK_SHA_BEFORE) { throw 'The Windows build changed flutter/pubspec.lock.' }
+          if ($cargoLock -ne $env:CARGO_LOCK_SHA_BEFORE) { throw 'The Windows build changed Cargo.lock.' }
+
+      - name: Package and verify unsigned x64 runtime
+        id: package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $release = Join-Path $env:GITHUB_WORKSPACE 'flutter\build\windows\x64\runner\Release'
+          $stage = Join-Path $env:RUNNER_TEMP 'rustdesk-windows-x64'
+          foreach ($required in @('rustdesk.exe', 'librustdesk.dll', 'dylib_virtual_display.dll')) {
+            if (-not (Test-Path (Join-Path $release $required) -PathType Leaf)) {
+              throw "Required Windows runtime file is missing: $required"
+            }
+          }
+          New-Item -ItemType Directory -Force $stage | Out-Null
+          Copy-Item -Path "$release\*" -Destination $stage -Recurse -Force
+          $exe = Join-Path $stage 'rustdesk.exe'
+          Push-Location $stage
+          $versionOutput = & $exe --version 2>&1
+          $versionExitCode = $LASTEXITCODE
+          Pop-Location
+          $runtimeVersion = ($versionOutput | Out-String).Trim()
+          if ($versionExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($runtimeVersion)) {
+            throw "Packaged runtime smoke check failed with exit code ${versionExitCode}: $runtimeVersion"
+          }
+          "RUNTIME_VERSION=$runtimeVersion" >> $env:GITHUB_ENV
+          $bytes = [System.IO.File]::ReadAllBytes($exe)
+          $peOffset = [BitConverter]::ToInt32($bytes, 0x3c)
+          $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+          if ($machine -ne 0x8664) { throw "Expected PE AMD64 (0x8664), got 0x$($machine.ToString('X4'))" }
+          $signature = Get-AuthenticodeSignature -FilePath $exe
+          if ($signature.Status -ne 'NotSigned') { throw "Expected unsigned executable, got signature status $($signature.Status)" }
+          $zip = Join-Path $env:RUNNER_TEMP 'rustdesk-windows-x64-locked.zip'
+          Compress-Archive -Path "$stage\*" -DestinationPath $zip -Force
+          $zipHash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          $exeHash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "ZIP_PATH=$zip" >> $env:GITHUB_ENV
+          "ZIP_SHA256=$zipHash" >> $env:GITHUB_ENV
+          "EXE_SHA256=$exeHash" >> $env:GITHUB_ENV
+
+      - name: Write provenance manifest
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $visualStudio = if (Test-Path $vswhere -PathType Leaf) { & $vswhere -latest -products '*' -format json | ConvertFrom-Json | Select-Object -First 1 } else { $null }
+          $sdkRoot = "${env:ProgramFiles(x86)}\Windows Kits\10\Include"
+          $windowsSdk = if (Test-Path $sdkRoot -PathType Container) { (Get-ChildItem $sdkRoot -Directory | Sort-Object Name -Descending | Select-Object -First 1).Name } else { '' }
+          $manifest = [ordered]@{
+            provenance_version = 1
+            repository = 'FrankHan052176/rustdesk4ohos'
+            source_commit = (git rev-parse HEAD).Trim()
+            hbb_common_commit = (git -C libs/hbb_common rev-parse HEAD).Trim()
+            workflow_commit = $env:GITHUB_SHA
+            run = [ordered]@{
+              id = $env:GITHUB_RUN_ID
+              attempt = $env:GITHUB_RUN_ATTEMPT
+              url = "https://github.com/FrankHan052176/rustdesk4ohos/actions/runs/$env:GITHUB_RUN_ID"
+              runner_os = $env:RUNNER_OS
+              image_os = $env:ImageOS
+              image_version = $env:ImageVersion
+            }
+            toolchains = [ordered]@{
+              flutter = (flutter --version 2>&1 | Out-String).Trim()
+              dart = (dart --version 2>&1 | Out-String).Trim()
+              rustc = (rustc -Vv | Out-String).Trim()
+              cargo = (cargo -V | Out-String).Trim()
+              llvm = $env:LLVM_VERSION
+              msvc_linker = $env:MSVC_LINKER
+              visual_studio = if ($null -ne $visualStudio) { $visualStudio.installationVersion } else { '' }
+              windows_sdk = $windowsSdk
+            }
+            dependencies = [ordered]@{
+              vcpkg_commit = (git -C $env:VCPKG_ROOT rev-parse HEAD).Trim()
+              triplet = 'x64-windows-static'
+              pubspec_lock_sha256_before = $env:PUBSPEC_LOCK_SHA_BEFORE
+              pubspec_lock_sha256_after = (Get-FileHash flutter/pubspec.lock -Algorithm SHA256).Hash.ToLowerInvariant()
+              cargo_lock_sha256_before = $env:CARGO_LOCK_SHA_BEFORE
+              cargo_lock_sha256_after = (Get-FileHash Cargo.lock -Algorithm SHA256).Hash.ToLowerInvariant()
+            }
+            build = [ordered]@{
+              command = 'python build.py --portable --flutter --skip-portable-pack --hwcodec --vram'
+              unsigned = $true
+              published = $false
+            }
+            artifact = [ordered]@{
+              zip_name = 'rustdesk-windows-x64-locked.zip'
+              zip_sha256 = $env:ZIP_SHA256
+              executable_name = 'rustdesk.exe'
+              executable_sha256 = $env:EXE_SHA256
+              machine = 'AMD64'
+              authenticode_status = 'NotSigned'
+              cli_version = $env:RUNTIME_VERSION
+            }
+          }
+          $manifestPath = Join-Path $env:RUNNER_TEMP 'provenance.json'
+          $manifest | ConvertTo-Json -Depth 6 | Set-Content -Path $manifestPath -Encoding utf8
+          "PROVENANCE_PATH=$manifestPath" >> $env:GITHUB_ENV
+
+      - name: Upload unsigned runtime and provenance
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: rustdesk-windows-x64-locked-${{ github.run_id }}
+          path: |
+            ${{ env.ZIP_PATH }}
+            ${{ env.PROVENANCE_PATH }}
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
