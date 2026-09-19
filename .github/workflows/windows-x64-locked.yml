@@ -208,15 +208,16 @@ jobs:
           New-Item -ItemType Directory -Force $stage | Out-Null
           Copy-Item -Path "$release\*" -Destination $stage -Recurse -Force
           $exe = Join-Path $stage 'rustdesk.exe'
-          Push-Location $stage
-          $versionOutput = & $exe --version 2>&1
-          $versionExitCode = $LASTEXITCODE
-          Pop-Location
-          $runtimeVersion = ($versionOutput | Out-String).Trim()
-          if ($versionExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($runtimeVersion)) {
-            throw "Packaged runtime smoke check failed with exit code ${versionExitCode}: $runtimeVersion"
+          $versionProcess = Start-Process -FilePath $exe -ArgumentList '--version' -WorkingDirectory $stage -Wait -PassThru
+          if ($versionProcess.ExitCode -ne 0) {
+            throw "Packaged runtime '--version' smoke check failed with exit code $($versionProcess.ExitCode)."
+          }
+          $runtimeVersion = (Get-Item $exe).VersionInfo.ProductVersion
+          if ([string]::IsNullOrWhiteSpace($runtimeVersion)) {
+            throw 'Packaged runtime version resource is missing.'
           }
           "RUNTIME_VERSION=$runtimeVersion" >> $env:GITHUB_ENV
+          'RUNTIME_SMOKE_CHECK=--version exited 0' >> $env:GITHUB_ENV
           $bytes = [System.IO.File]::ReadAllBytes($exe)
           $peOffset = [BitConverter]::ToInt32($bytes, 0x3c)
           $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
@@ -286,7 +287,8 @@ jobs:
               executable_sha256 = $env:EXE_SHA256
               machine = 'AMD64'
               authenticode_status = 'NotSigned'
-              cli_version = $env:RUNTIME_VERSION
+              version_resource = $env:RUNTIME_VERSION
+              smoke_check = $env:RUNTIME_SMOKE_CHECK
             }
           }
           $manifestPath = Join-Path $env:RUNNER_TEMP 'provenance.json'
