@@ -1,0 +1,126 @@
+name: Resolve Windows Flutter lock candidate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: resolve-windows-flutter-lock-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  SOURCE_SHA: 1b9156ed4c85f909c246b581239874b64a054003
+  FLUTTER_VERSION: 3.38.10
+  FLUTTER_DART_VERSION: 3.10.9
+  FLUTTER_ARCHIVE: stable/windows/flutter_windows_3.38.10-stable.zip
+  FLUTTER_ARCHIVE_SHA256: 97e560d028f1b0b414e5f19ac2c4ebf079c001e8a18563a0e940c4d84700d334
+
+jobs:
+  resolve-lock:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - name: Checkout pinned source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          persist-credentials: false
+
+      - name: Verify source and prepare only reviewed manifest corrections
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $source = (git rev-parse HEAD).Trim()
+          if ($source -ne $env:SOURCE_SHA) { throw "Expected source $env:SOURCE_SHA, got $source" }
+          git diff --exit-code
+          $manifest = 'flutter/pubspec.yaml'
+          $originalManifestHash = (Get-FileHash $manifest -Algorithm SHA256).Hash.ToLowerInvariant()
+          $originalLockHash = (Get-FileHash 'flutter/pubspec.lock' -Algorithm SHA256).Hash.ToLowerInvariant()
+          $contents = [System.IO.File]::ReadAllText($manifest)
+          $replacements = [ordered]@{
+            'extended_text: ^14.2.0' = 'extended_text: ^15.0.2'
+            'google_fonts: ^6.2.1' = 'google_fonts: ^8.2.1'
+          }
+          foreach ($replacement in $replacements.GetEnumerator()) {
+            $matches = [regex]::Matches($contents, [regex]::Escape($replacement.Key)).Count
+            if ($matches -ne 1) { throw "Expected exactly one manifest entry: $($replacement.Key)" }
+            $contents = $contents.Replace($replacement.Key, $replacement.Value)
+          }
+          [System.IO.File]::WriteAllText($manifest, $contents, [System.Text.UTF8Encoding]::new($false))
+          "ORIGINAL_MANIFEST_SHA256=$originalManifestHash" >> $env:GITHUB_ENV
+          "ORIGINAL_LOCK_SHA256=$originalLockHash" >> $env:GITHUB_ENV
+
+      - name: Install exact official Flutter SDK
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $archive = Join-Path $env:RUNNER_TEMP 'flutter-windows.zip'
+          $uri = "https://storage.googleapis.com/flutter_infra_release/releases/$env:FLUTTER_ARCHIVE"
+          Invoke-WebRequest -Uri $uri -OutFile $archive
+          $actual = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $env:FLUTTER_ARCHIVE_SHA256) { throw "Flutter archive SHA-256 mismatch: $actual" }
+          Expand-Archive -Path $archive -DestinationPath $env:RUNNER_TEMP
+          $flutterRoot = Join-Path $env:RUNNER_TEMP 'flutter'
+          if (-not (Test-Path "$flutterRoot\bin\flutter.bat" -PathType Leaf)) { throw 'Flutter archive did not contain flutter/bin/flutter.bat.' }
+          "$flutterRoot\bin" >> $env:GITHUB_PATH
+          & "$flutterRoot\bin\flutter.bat" config --no-analytics
+          $version = (& "$flutterRoot\bin\flutter.bat" --version 2>&1 | Out-String)
+          Write-Host $version
+          if ($version -notmatch "Flutter $([regex]::Escape($env:FLUTTER_VERSION))") { throw 'Installed Flutter version differs from the pinned release.' }
+          if ($version -notmatch "Dart $([regex]::Escape($env:FLUTTER_DART_VERSION))") { throw 'Installed Dart version differs from the pinned release.' }
+
+      - name: Generate and verify candidate lockfile
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Push-Location flutter
+          flutter pub get
+          if ($LASTEXITCODE -ne 0) { throw 'Target-SDK dependency resolution failed.' }
+          $candidateHash = (Get-FileHash pubspec.lock -Algorithm SHA256).Hash.ToLowerInvariant()
+          flutter pub get --enforce-lockfile
+          if ($LASTEXITCODE -ne 0) { throw 'Generated lockfile did not pass enforce-lockfile verification.' }
+          $verifiedHash = (Get-FileHash pubspec.lock -Algorithm SHA256).Hash.ToLowerInvariant()
+          Pop-Location
+          if ($candidateHash -ne $verifiedHash) { throw 'A second locked resolution changed the generated candidate.' }
+          "CANDIDATE_LOCK_SHA256=$candidateHash" >> $env:GITHUB_ENV
+
+      - name: Stage candidate and provenance for review
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $stage = Join-Path $env:RUNNER_TEMP 'windows-flutter-lock-candidate'
+          New-Item -ItemType Directory -Force $stage | Out-Null
+          Copy-Item flutter/pubspec.yaml (Join-Path $stage 'pubspec.yaml')
+          Copy-Item flutter/pubspec.lock (Join-Path $stage 'pubspec.lock')
+          $diff = & git diff --no-ext-diff -- flutter/pubspec.yaml flutter/pubspec.lock
+          $diffExitCode = $LASTEXITCODE
+          if ($diffExitCode -gt 1) { throw "Unable to generate reconciliation diff (exit $diffExitCode)." }
+          $global:LASTEXITCODE = 0
+          $diff | Set-Content -Path (Join-Path $stage 'reconciliation.diff') -Encoding utf8
+          $manifest = [ordered]@{
+            provenance_version = 1
+            source_commit = (git rev-parse HEAD).Trim()
+            source_manifest_sha256 = $env:ORIGINAL_MANIFEST_SHA256
+            source_lock_sha256 = $env:ORIGINAL_LOCK_SHA256
+            candidate_manifest_sha256 = (Get-FileHash flutter/pubspec.yaml -Algorithm SHA256).Hash.ToLowerInvariant()
+            candidate_lock_sha256 = $env:CANDIDATE_LOCK_SHA256
+            flutter_version = $env:FLUTTER_VERSION
+            dart_version = $env:FLUTTER_DART_VERSION
+            flutter_archive = $env:FLUTTER_ARCHIVE
+            flutter_archive_sha256 = $env:FLUTTER_ARCHIVE_SHA256
+            run_url = "https://github.com/FrankHan052176/rustdesk4ohos/actions/runs/$env:GITHUB_RUN_ID"
+            result = 'candidate-only; no source commit, signing, publishing, release, native build, or runtime artifact'
+          }
+          $manifest | ConvertTo-Json -Depth 4 | Set-Content -Path (Join-Path $stage 'provenance.json') -Encoding utf8
+          "CANDIDATE_STAGE=$stage" >> $env:GITHUB_ENV
+
+      - name: Upload lockfile candidate
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: windows-flutter-lock-candidate-${{ github.run_id }}
+          path: ${{ env.CANDIDATE_STAGE }}
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
