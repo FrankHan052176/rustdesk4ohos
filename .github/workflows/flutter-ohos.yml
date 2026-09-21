@@ -118,7 +118,18 @@ jobs:
         working-directory: flutter
         run: |
           python3 ../scripts/prepare-ohos-flutter.py
-          flutter pub get
+          # pub get also pulls lazily-downloaded engine artifacts from the same Huawei CDN
+          # whose DNS has failed outright on these runners; retry instead of losing the leg.
+          for attempt in 1 2 3 4 5; do
+            if flutter pub get; then
+              break
+            fi
+            if [[ "$attempt" == 5 ]]; then
+              echo "Flutter-OH dependencies could not be resolved after $attempt attempts" >&2
+              exit 1
+            fi
+            sleep $((attempt * 20))
+          done
 
       - name: Cross-compile OHOS Flutter bridge
         shell: bash
