@@ -88,7 +88,7 @@ upload_file() {
   local -a upload_headers=()
   local attempt
   local upload_started
-  local upload_max_time="${AGC_UPLOAD_MAX_TIME_SECONDS:-3600}"
+  local upload_max_time="${AGC_UPLOAD_MAX_TIME_SECONDS:-240}"
   local upload_attempts="${AGC_UPLOAD_ATTEMPTS:-2}"
 
   file_name=$(basename "$file_path")
@@ -119,6 +119,9 @@ upload_file() {
       upload_headers+=(--header "$header_name: $header_value")
     done < <(jq -c '.urlInfo.headers // {} | to_entries[]' <<<"$upload_url_response")
 
+    # The App Pack is ~24 MiB and a link that can reach the OBS bucket moves it in about two
+    # minutes; a runner that cannot is treated as unable to reach it, so each attempt is capped
+    # at four minutes instead of burning the job on a transfer that is not progressing.
     # HTTP/1.1 without Expect: the OBS endpoint answers no HTTP/2 upload at all from these
     # runners, and the 100-continue dance leaves the request open with zero bytes exchanged.
     echo "AGC: uploading to OBS ($upload_method, attempt $attempt/$upload_attempts)" >&2

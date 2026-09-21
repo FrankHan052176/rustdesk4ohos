@@ -41,9 +41,7 @@ jobs:
   build-rustdesk-ohos-flutter:
     name: Flutter OpenHarmony (aarch64)
     runs-on: macos-15
-    # The App Pack upload to AppGallery Connect crosses to a Huawei-hosted OBS bucket and can
-    # take tens of minutes on its own; the budget has to absorb a slow but healthy transfer.
-    timeout-minutes: 180
+    timeout-minutes: 90
     steps:
       - name: Checkout source code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
