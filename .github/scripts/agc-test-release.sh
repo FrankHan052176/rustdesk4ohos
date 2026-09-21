@@ -86,52 +86,63 @@ upload_file() {
   local header_name
   local header_value
   local -a upload_headers=()
+  local attempt
+  local upload_started
+  local upload_max_time="${AGC_UPLOAD_MAX_TIME_SECONDS:-900}"
+  local upload_attempts="${AGC_UPLOAD_ATTEMPTS:-3}"
 
   file_name=$(basename "$file_path")
   file_size=$(wc -c < "$file_path" | tr -d ' ')
   file_hash=$(file_sha256 "$file_path")
-  echo "AGC: requesting an upload slot for $file_name ($((file_size / 1024 / 1024)) MiB)"
-  upload_url_response=$(curl --silent --show-error --fail-with-body \
-    "${curl_retrying[@]}" \
-    --get "$api_base/publish/v2/upload-url/for-obs" \
-    "${api_headers[@]}" \
-    --data-urlencode "appId=$AGC_APP_ID" \
-    --data-urlencode "fileName=$file_name" \
-    --data-urlencode "sha256=$file_hash" \
-    --data-urlencode "contentLength=$file_size")
-  check_ret "$upload_url_response"
-  upload_url=$(jq -er '.urlInfo.url // empty' <<<"$upload_url_response")
-  upload_method=$(jq -er '.urlInfo.method // "PUT"' <<<"$upload_url_response")
-  object_id=$(jq -er '.urlInfo.objectId // empty' <<<"$upload_url_response")
 
-  while IFS= read -r header_json; do
-    header_name=$(jq -r '.key' <<<"$header_json")
-    header_value=$(jq -r '.value' <<<"$header_json")
-    upload_headers+=(--header "$header_name: $header_value")
-  done < <(jq -c '.urlInfo.headers // {} | to_entries[]' <<<"$upload_url_response")
+  for ((attempt = 1; attempt <= upload_attempts; attempt++)); do
+    # Every attempt asks for its own upload slot: the pre-signed OBS URL expires, so reusing one
+    # after a timeout is what turns a retry into a 403.
+    echo "AGC: requesting an upload slot for $file_name ($((file_size / 1024 / 1024)) MiB)"
+    upload_url_response=$(curl --silent --show-error --fail-with-body \
+      "${curl_retrying[@]}" \
+      --get "$api_base/publish/v2/upload-url/for-obs" \
+      "${api_headers[@]}" \
+      --data-urlencode "appId=$AGC_APP_ID" \
+      --data-urlencode "fileName=$file_name" \
+      --data-urlencode "sha256=$file_hash" \
+      --data-urlencode "contentLength=$file_size")
+    check_ret "$upload_url_response"
+    upload_url=$(jq -er '.urlInfo.url // empty' <<<"$upload_url_response")
+    upload_method=$(jq -er '.urlInfo.method // "PUT"' <<<"$upload_url_response")
+    object_id=$(jq -er '.urlInfo.objectId // empty' <<<"$upload_url_response")
 
-  echo "AGC: uploading to OBS ($upload_method)"
-  upload_started=$(date -u +%s)
-  # The App Pack crosses to a Huawei-hosted OBS bucket, so a slow but healthy transfer must be
-  # allowed to finish: only a transfer that makes no progress for 60s is abandoned.
-  if (( ${#upload_headers[@]} == 0 )); then
-    curl --silent --show-error --fail-with-body \
-      "${curl_retrying[@]}" --max-time "${AGC_UPLOAD_MAX_TIME_SECONDS:-2400}" \
+    upload_headers=()
+    while IFS= read -r header_json; do
+      header_name=$(jq -r '.key' <<<"$header_json")
+      header_value=$(jq -r '.value' <<<"$header_json")
+      upload_headers+=(--header "$header_name: $header_value")
+    done < <(jq -c '.urlInfo.headers // {} | to_entries[]' <<<"$upload_url_response")
+
+    # HTTP/1.1 without Expect: the OBS endpoint answers no HTTP/2 upload at all from these
+    # runners, and the 100-continue dance leaves the request open with zero bytes exchanged.
+    echo "AGC: uploading to OBS ($upload_method, attempt $attempt/$upload_attempts)"
+    upload_started=$(date -u +%s)
+    if curl --silent --show-error --fail-with-body \
+      --connect-timeout "${AGC_CONNECT_TIMEOUT:-30}" --max-time "$upload_max_time" \
+      --http1.1 --header 'Expect:' \
       --speed-limit 1024 --speed-time 60 \
       --request "$upload_method" \
+      ${upload_headers[@]+"${upload_headers[@]}"} \
       --data-binary "@$file_path" \
-      "$upload_url" >/dev/null
-  else
-    curl --silent --show-error --fail-with-body \
-      "${curl_retrying[@]}" --max-time "${AGC_UPLOAD_MAX_TIME_SECONDS:-2400}" \
-      --speed-limit 1024 --speed-time 60 \
-      --request "$upload_method" \
-      "${upload_headers[@]}" \
-      --data-binary "@$file_path" \
-      "$upload_url" >/dev/null
-  fi
-  echo "AGC: upload finished in $(( $(date -u +%s) - upload_started ))s (object $object_id)"
-  printf '%s\n' "$object_id"
+      "$upload_url" >/dev/null; then
+      echo "AGC: upload finished in $(( $(date -u +%s) - upload_started ))s (object $object_id)"
+      printf '%s\n' "$object_id"
+      return 0
+    fi
+    echo "AGC: upload attempt $attempt failed after $(( $(date -u +%s) - upload_started ))s" >&2
+    if (( attempt < upload_attempts )); then
+      sleep $((attempt * 15))
+    fi
+  done
+
+  echo "AGC: upload failed after $upload_attempts attempts" >&2
+  exit 1
 }
 
 fetch_group_infos() {
