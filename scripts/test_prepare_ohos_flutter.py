@@ -18,14 +18,14 @@ SPEC.loader.exec_module(PREPARE)
 BASE = 'name: sdk_selection_test\ndependencies:\n' + ''.join(
     f'  {name}:\n    git:\n      url: {url}\n      ref: {standard}\n'
     for name, url, standard, ohos in PREPARE.DEPENDENCIES
-) + '  extended_text: ^14.2.0\n  google_fonts: ^6.2.1\ndependency_overrides:\n  intl: ^0.19.0\n'
+) + '  extended_text: ^14.2.0\n  google_fonts: ^8.2.1\ndependency_overrides:\n  intl: ^0.19.0\n'
 
 
 class DependencyPreparationTest(unittest.TestCase):
     def test_selects_ohos_without_changing_other_options(self):
         selected = PREPARE.prepare(BASE)
         expected = BASE.replace('extended_text: ^14.2.0', 'extended_text: ^15.0.2')
-        expected = expected.replace('google_fonts: ^6.2.1', 'google_fonts: ^8.1.0')
+        expected = expected.replace('google_fonts: ^8.2.1', 'google_fonts: ^8.1.0')
         for name, url, standard, ohos in PREPARE.DEPENDENCIES:
             expected = expected.replace(standard, ohos)
         self.assertEqual(selected, expected)
@@ -34,7 +34,9 @@ class DependencyPreparationTest(unittest.TestCase):
         name, url, standard, ohos = PREPARE.DEPENDENCIES[0]
         selected = PREPARE.prepare(BASE)
         self.assertEqual(PREPARE.prepare(BASE.replace(standard, ohos)), selected)
-        self.assertEqual(PREPARE.prepare(BASE.replace('google_fonts: ^6.2.1', 'google_fonts: ^8.1.0')), selected)
+        for version in ('^6.2.1', '^8.1.0', '^8.2.1'):
+            source = BASE.replace('google_fonts: ^8.2.1', f'google_fonts: {version}')
+            self.assertEqual(PREPARE.prepare(source), selected)
         self.assertEqual(PREPARE.prepare(selected), selected)
 
     def test_rejects_unknown_dependency_revision(self):
@@ -61,7 +63,7 @@ class DependencyPreparationTest(unittest.TestCase):
         for dependency in ('', '  google_fonts: ^9.0.0\n'):
             with self.subTest(dependency=dependency):
                 with self.assertRaisesRegex(ValueError, 'google_fonts'):
-                    PREPARE.prepare(BASE.replace('  google_fonts: ^6.2.1\n', dependency))
+                    PREPARE.prepare(BASE.replace('  google_fonts: ^8.2.1\n', dependency))
 
     def test_cli_failure_leaves_input_unchanged(self):
         invalid = BASE.replace('  extended_text: ^14.2.0\n', '')

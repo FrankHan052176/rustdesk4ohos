@@ -39,7 +39,7 @@ def prepare(source: str) -> str:
         raise ValueError('Expected one supported extended_text dependency')
     # FontWeight has non-primitive equality in Flutter-OH 3.41.
     source, count = re.subn(
-        r'(?m)^  google_fonts: (?:\^6\.2\.1|\^8\.1\.0)$',
+        r'(?m)^  google_fonts: (?:\^6\.2\.1|\^8\.1\.0|\^8\.2\.1)$',
         '  google_fonts: ^8.1.0', source,
     )
     if count != 1:
