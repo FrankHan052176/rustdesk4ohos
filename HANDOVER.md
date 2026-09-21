@@ -137,13 +137,13 @@ AGC 应用 id 硬编码在 `flutter-ohos.yml`：`6917615823381371195`；提交�
 | --- | --- | --- | --- |
 | linux / windows x64 / i686 / android / ios / darwin | 3.24.5（Dart 3.5.4） | 不改写，直接消费 | 必须能被 Dart 3.5.4 解析 |
 | windows arm64、`apply_flutter_3.44_web_patches.sh` 相关 | 3.44.x | `.github/patches/apply_flutter_3.44_source_patches.sh` | 任意值（脚本按包名整行替换） |
-| OHOS | Flutter-OH 3.41 | `scripts/prepare-ohos-flutter.py` | `extended_text` 只接受 `^14.2.0`/`^15.0.2`；`google_fonts` 只接受 `^6.2.1`/`^8.1.0`/`^8.2.1`；三个 git 依赖只接受"标准 ref"或"OHOS ref" |
+| OHOS | Flutter-OH 3.41 | `scripts/prepare-ohos-flutter.py` | `extended_text` 只接受 `^14.2.0`/`^15.0.2`；`google_fonts` 只接受 `^6.2.1`/`^8.1.0`；三个 git 依赖只接受"标准 ref"或"OHOS ref" |
 
 当前 committed 值（**改之前先想清楚三条腿**）：
 
 ```yaml
 extended_text: ^14.2.0     # 14.2.x: sdk >=3.5.0, flutter >=3.24.0
-google_fonts: ^8.2.1
+google_fonts: ^6.2.1
 # settings_ui / flex_color_picker / xterm 走 git ref，OHOS 腿会把 ref 换成 OHOS 分支
 ```
 
