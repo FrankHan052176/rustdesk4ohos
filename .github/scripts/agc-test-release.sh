@@ -17,6 +17,20 @@ if [[ -z "$AGC_APP_FILE" || ! -f "$AGC_APP_FILE" ]]; then
 fi
 
 api_base="https://${AGC_API_DOMAIN}/api"
+
+# Every request is bounded: an unreachable AppGallery Connect or OBS endpoint has to fail the
+# step instead of silently consuming the job budget. Retries cover only calls that are safe to
+# repeat, so a stalled upload recovers without risking a duplicate package or submission.
+curl_bounded=(
+  --connect-timeout "${AGC_CONNECT_TIMEOUT:-30}"
+  --max-time "${AGC_MAX_TIME_SECONDS:-900}"
+)
+curl_retrying=(
+  "${curl_bounded[@]}"
+  --retry "${AGC_RETRY_ATTEMPTS:-3}"
+  --retry-delay 5
+  --retry-connrefused
+)
 app_id_q=$(jq -rn --arg value "$AGC_APP_ID" '$value | @uri')
 
 check_ret() {
@@ -76,7 +90,9 @@ upload_file() {
   file_name=$(basename "$file_path")
   file_size=$(wc -c < "$file_path" | tr -d ' ')
   file_hash=$(file_sha256 "$file_path")
+  echo "AGC: requesting an upload slot for $file_name ($((file_size / 1024 / 1024)) MiB)"
   upload_url_response=$(curl --silent --show-error --fail-with-body \
+    "${curl_retrying[@]}" \
     --get "$api_base/publish/v2/upload-url/for-obs" \
     "${api_headers[@]}" \
     --data-urlencode "appId=$AGC_APP_ID" \
@@ -94,18 +110,27 @@ upload_file() {
     upload_headers+=(--header "$header_name: $header_value")
   done < <(jq -c '.urlInfo.headers // {} | to_entries[]' <<<"$upload_url_response")
 
+  echo "AGC: uploading to OBS ($upload_method)"
+  upload_started=$(date -u +%s)
+  # The App Pack crosses to a Huawei-hosted OBS bucket, so a slow but healthy transfer must be
+  # allowed to finish: only a transfer that makes no progress for 60s is abandoned.
   if (( ${#upload_headers[@]} == 0 )); then
     curl --silent --show-error --fail-with-body \
+      "${curl_retrying[@]}" --max-time "${AGC_UPLOAD_MAX_TIME_SECONDS:-2400}" \
+      --speed-limit 1024 --speed-time 60 \
       --request "$upload_method" \
       --data-binary "@$file_path" \
       "$upload_url" >/dev/null
   else
     curl --silent --show-error --fail-with-body \
+      "${curl_retrying[@]}" --max-time "${AGC_UPLOAD_MAX_TIME_SECONDS:-2400}" \
+      --speed-limit 1024 --speed-time 60 \
       --request "$upload_method" \
       "${upload_headers[@]}" \
       --data-binary "@$file_path" \
       "$upload_url" >/dev/null
   fi
+  echo "AGC: upload finished in $(( $(date -u +%s) - upload_started ))s (object $object_id)"
   printf '%s\n' "$object_id"
 }
 
@@ -119,6 +144,7 @@ fetch_group_infos() {
 
   while :; do
     response=$(curl --silent --show-error --fail-with-body \
+      "${curl_retrying[@]}" \
       --get "$api_base/app-test/v1/test-group/list" \
       "${api_headers[@]}" \
       --header "appId: $AGC_APP_ID" \
@@ -157,6 +183,7 @@ add_package() {
   local package_id
 
   response=$(curl --silent --show-error --fail-with-body \
+    "${curl_bounded[@]}" \
     --request POST "$api_base/publish/v2/test/version/pkg?appId=$app_id_q" \
     "${api_headers[@]}" \
     --data "$(jq -cn \
@@ -177,12 +204,14 @@ wait_for_package() {
 
   for ((attempt = 1; attempt <= poll_attempts; attempt++)); do
     status_response=$(curl --silent --show-error --fail-with-body \
+      "${curl_retrying[@]}" \
       --get "$api_base/publish/v3/package/compile/status" \
       "${api_headers[@]}" \
       --data-urlencode "appId=$AGC_APP_ID" \
       --data-urlencode "pkgIds=$package_id")
     check_ret "$status_response"
     success_status=$(jq -r '.pkgStateList[0].successStatus // empty' <<<"$status_response")
+    echo "AGC: package $package_id compile status ${success_status:-unknown} (attempt $attempt/$poll_attempts)"
     if [[ "$success_status" == "0" ]]; then
       return 0
     fi
@@ -229,12 +258,14 @@ cleanup_local_test_version() {
   local stop_response
   local delete_response
   stop_response=$(curl --silent --show-error --fail-with-body \
+    "${curl_bounded[@]}" \
     --request POST "$api_base/publish/v2/test/version/stop?appId=$app_id_q" \
     "${api_headers[@]}" \
     --data "$(jq -cn --arg version_id "$version_id" '{versionId: $version_id}')")
   check_ret "$stop_response"
 
   delete_response=$(curl --silent --show-error --fail-with-body \
+    "${curl_bounded[@]}" \
     --request DELETE "$api_base/publish/v2/test/app/version?versionId=$version_id&appId=$app_id_q" \
     "${api_headers[@]}")
   if [[ -n "$delete_response" ]]; then
@@ -244,6 +275,7 @@ cleanup_local_test_version() {
 }
 
 token_response=$(curl --silent --show-error --fail-with-body \
+  "${curl_bounded[@]}" \
   --request POST "$api_base/oauth2/v1/token" \
   --header 'Content-Type: application/json' \
   --data "$(jq -cn \
@@ -305,6 +337,7 @@ wait_for_package "$release_package_id"
 group_infos=$(fetch_group_infos)
 group_count=$(jq -er 'length' <<<"$group_infos")
 create_response=$(curl --silent --show-error --fail-with-body \
+  "${curl_bounded[@]}" \
   --request POST "$api_base/publish/v2/test/app/version?appId=$app_id_q" \
   "${api_headers[@]}" \
   --data "$(jq -cn \
@@ -318,6 +351,7 @@ write_result
 start_time=$(( $(utc_now_ms) + 60 * 60 * 1000 ))
 end_time=$(( start_time + duration_days * 24 * 60 * 60 * 1000 ))
 update_response=$(curl --silent --show-error --fail-with-body \
+  "${curl_bounded[@]}" \
   --request PUT "$api_base/publish/v2/test/app/version?appId=$app_id_q" \
   "${api_headers[@]}" \
   --data "$(jq -cn \
@@ -346,6 +380,7 @@ update_response=$(curl --silent --show-error --fail-with-body \
 check_ret "$update_response"
 
 submit_response=$(curl --silent --show-error --fail-with-body \
+  "${curl_bounded[@]}" \
   --request POST "$api_base/publish/v2/test/app/version/submit?appId=$app_id_q" \
   "${api_headers[@]}" \
   --data "$(jq -cn --arg version_id "$version_id" '{versionId: $version_id}')")
