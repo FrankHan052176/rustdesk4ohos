@@ -262,6 +262,12 @@ jobs:
           AGC_API_DOMAIN: ${{ vars.AGC_API_DOMAIN || 'connect-api.cloud.huawei.com' }}
           # The open test window: starts an hour after submission and runs two months.
           AGC_TEST_DURATION_DAYS: ${{ vars.AGC_TEST_DURATION_DAYS || '60' }}
+          # The App Pack is ~24 MiB. Measured from a GitHub-hosted runner, the Huawei OBS bucket
+          # accepts it at roughly 20 KiB/s, which needs about 20 minutes, while a China-local
+          # link uploads it in under two. Four minutes per attempt keeps a runner that cannot
+          # reach the bucket from burning the leg; raise this repository variable to let CI
+          # finish the upload itself.
+          AGC_UPLOAD_MAX_TIME_SECONDS: ${{ vars.AGC_UPLOAD_MAX_TIME_SECONDS || '240' }}
           AGC_EVENT_NAME: ${{ github.event_name }}
           AGC_RUN_ATTEMPT: ${{ github.run_attempt }}
           AGC_WORKFLOW_SHA: ${{ github.sha }}
