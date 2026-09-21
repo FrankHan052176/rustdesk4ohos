@@ -250,30 +250,18 @@ jobs:
           compression-level: 0
           retention-days: 14
 
-      # Uploads the verified signed App Pack and submits it as an AppGallery Connect test
-      # version (no production release, nothing goes to review).
-      - name: Upload the Flutter OpenHarmony APP and submit an AGC test version
+      # The submission itself runs in the ubuntu job below: the App Pack crosses to a
+      # Huawei-hosted bucket in the app's China region, and the ArkTS repositories submit from
+      # ubuntu rather than from a macOS runner.
+      - name: Upload the signed Flutter OpenHarmony APP for submission
         if: ${{ inputs.upload-agc }}
-        shell: bash
-        env:
-          AGC_CLIENT_ID: ${{ secrets.AGC_CLIENT_ID }}
-          AGC_CLIENT_SECRET: ${{ secrets.AGC_CLIENT_SECRET }}
-          AGC_APP_ID: '6917615823381371195'
-          AGC_API_DOMAIN: ${{ vars.AGC_API_DOMAIN || 'connect-api.cloud.huawei.com' }}
-          # The open test window: starts an hour after submission and runs two months.
-          AGC_TEST_DURATION_DAYS: ${{ vars.AGC_TEST_DURATION_DAYS || '60' }}
-          # The App Pack is ~24 MiB. Measured from a GitHub-hosted runner, the Huawei OBS bucket
-          # accepts it at roughly 20 KiB/s, which needs about 20 minutes, while a China-local
-          # link uploads it in under two. Four minutes per attempt keeps a runner that cannot
-          # reach the bucket from burning the leg; raise this repository variable to let CI
-          # finish the upload itself.
-          AGC_UPLOAD_MAX_TIME_SECONDS: ${{ vars.AGC_UPLOAD_MAX_TIME_SECONDS || '240' }}
-          AGC_EVENT_NAME: ${{ github.event_name }}
-          AGC_RUN_ATTEMPT: ${{ github.run_attempt }}
-          AGC_WORKFLOW_SHA: ${{ github.sha }}
-          AGC_PUSH_COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
-        run: |
-          bash .github/scripts/agc-test-release.sh "rustdesk-$VERSION-ohos-arm64.app"
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rustdesk-flutter-ohos-app
+          path: rustdesk-${{ env.VERSION }}-ohos-arm64.app
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
 
       # The release carries the unsigned HAP so a user can sign it themselves; the
       # publish-signed App Pack stays in the workflow artifacts and in AppGallery Connect.
@@ -309,3 +297,44 @@ jobs:
               ;;
           esac
           rm -rf "$RUSTDESK_SIGNING_DIR"
+
+  # Submits the verified signed App Pack as an AppGallery Connect test version (no production
+  # release, nothing goes to review) from a ubuntu runner, which is how the ArkTS repositories
+  # reach AppGallery Connect.
+  submit-agc:
+    name: Submit the App Pack to AppGallery Connect
+    if: ${{ inputs.upload-agc }}
+    needs: build-rustdesk-ohos-flutter
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Download the signed Flutter OpenHarmony APP
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: rustdesk-flutter-ohos-app
+          path: ./
+
+      - name: Upload the Flutter OpenHarmony APP and submit an AGC test version
+        shell: bash
+        env:
+          AGC_CLIENT_ID: ${{ secrets.AGC_CLIENT_ID }}
+          AGC_CLIENT_SECRET: ${{ secrets.AGC_CLIENT_SECRET }}
+          AGC_APP_ID: '6917615823381371195'
+          AGC_API_DOMAIN: ${{ vars.AGC_API_DOMAIN || 'connect-api.cloud.huawei.com' }}
+          # The open test window: starts an hour after submission and runs two months.
+          AGC_TEST_DURATION_DAYS: ${{ vars.AGC_TEST_DURATION_DAYS || '60' }}
+          # How long a single part of the App Pack may take. The upload is multipart, so this
+          # bounds one part rather than the whole file: a China-local link moves a part in
+          # seconds, a GitHub-hosted runner takes minutes.
+          AGC_UPLOAD_MAX_TIME_SECONDS: ${{ vars.AGC_UPLOAD_MAX_TIME_SECONDS || '240' }}
+          AGC_EVENT_NAME: ${{ github.event_name }}
+          AGC_RUN_ATTEMPT: ${{ github.run_attempt }}
+          AGC_WORKFLOW_SHA: ${{ github.sha }}
+          AGC_PUSH_COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          bash .github/scripts/agc-test-release.sh "rustdesk-$VERSION-ohos-arm64.app"
