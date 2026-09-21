@@ -73,80 +73,167 @@ file_sha256() {
   fi
 }
 
+upload_query() {
+  jq -rn --arg value "$1" '$value | @uri'
+}
+
+# The App Pack is ~24 MiB. A single PUT is tied to one pre-signed slot that expires after about
+# five minutes, so on a slow link the transfer is cut off mid-flight and every retry restarts
+# from zero: measured at ~20 KiB/s from a GitHub-hosted runner against this app's China-region
+# bucket, against ~230 KiB/s from a China-local link. Multipart gives every part its own slot,
+# lets the parts run in parallel, and repeats only the part that failed.
 upload_file() {
   local file_path="$1"
   local file_name
   local file_size
-  local file_hash
-  local upload_url_response
-  local upload_url
-  local upload_method
+  local work_dir
+  local init_response
   local object_id
-  local header_json
-  local header_name
-  local header_value
-  local -a upload_headers=()
-  local attempt
-  local upload_started
+  local upload_id
+  local part_min
+  local part_size
+  local part_count
+  local index
+  local offset
+  local length
+  local part_key
+  local part_object_id
+  local parts_body
+  local parts_response
+  local compose_body
+  local compose_response
   local upload_max_time="${AGC_UPLOAD_MAX_TIME_SECONDS:-240}"
-  local upload_attempts="${AGC_UPLOAD_ATTEMPTS:-2}"
+  local upload_parallel="${AGC_UPLOAD_PARALLEL:-4}"
+  local -a part_pids=()
 
   file_name=$(basename "$file_path")
   file_size=$(wc -c < "$file_path" | tr -d ' ')
-  file_hash=$(file_sha256 "$file_path")
+  work_dir="$(mktemp -d)"
 
-  for ((attempt = 1; attempt <= upload_attempts; attempt++)); do
-    # Every attempt asks for its own upload slot: the pre-signed OBS URL expires, so reusing one
-    # after a timeout is what turns a retry into a 403.
-    echo "AGC: requesting an upload slot for $file_name ($((file_size / 1024 / 1024)) MiB)" >&2
-    upload_url_response=$(curl --silent --show-error --fail-with-body \
-      "${curl_retrying[@]}" \
-      --get "$api_base/publish/v2/upload-url/for-obs" \
-      "${api_headers[@]}" \
-      --data-urlencode "appId=$AGC_APP_ID" \
-      --data-urlencode "fileName=$file_name" \
-      --data-urlencode "sha256=$file_hash" \
-      --data-urlencode "contentLength=$file_size")
-    check_ret "$upload_url_response"
-    upload_url=$(jq -er '.urlInfo.url // empty' <<<"$upload_url_response")
-    upload_method=$(jq -er '.urlInfo.method // "PUT"' <<<"$upload_url_response")
-    object_id=$(jq -er '.urlInfo.objectId // empty' <<<"$upload_url_response")
+  echo "AGC: initialising a multipart upload for $file_name ($((file_size / 1024 / 1024)) MiB)" >&2
+  init_response=$(curl --silent --show-error --fail-with-body \
+    "${curl_retrying[@]}" \
+    --request POST \
+    "$api_base/publish/v2/upload/multipart/init?appId=$(upload_query "$AGC_APP_ID")&fileName=$(upload_query "$file_name")&contentType=$(upload_query 'application/octet-stream')" \
+    "${api_headers[@]}")
+  check_ret "$init_response"
+  object_id=$(jq -er '.objectId // empty' <<<"$init_response")
+  upload_id=$(jq -er '.nspUploadId // empty' <<<"$init_response")
+  part_min=$(jq -r '.nspPartMinSize // empty' <<<"$init_response")
+  if ! [[ "$part_min" =~ ^[1-9][0-9]*$ ]]; then
+    part_min=5242880
+  fi
 
-    upload_headers=()
-    while IFS= read -r header_json; do
-      header_name=$(jq -r '.key' <<<"$header_json")
-      header_value=$(jq -r '.value' <<<"$header_json")
-      upload_headers+=(--header "$header_name: $header_value")
-    done < <(jq -c '.urlInfo.headers // {} | to_entries[]' <<<"$upload_url_response")
+  part_size="$part_min"
+  if (( part_size > file_size )); then
+    part_size="$file_size"
+  fi
+  part_count=$(( (file_size + part_size - 1) / part_size ))
 
-    # The App Pack is ~24 MiB. Measured: a China-local link moves it in about two minutes at
-    # 230 KiB/s, while a GitHub-hosted runner reaches the app's China-region bucket at roughly
-    # 20 KiB/s, which needs about twenty minutes. AGC_UPLOAD_MAX_TIME_SECONDS bounds each
-    # attempt, --speed-limit/--speed-time cut a transfer that stops moving altogether, and the
-    # slot itself expires after about five minutes, so every attempt asks for a fresh one.
-    echo "AGC: uploading to OBS ($upload_method, attempt $attempt/$upload_attempts)" >&2
-    upload_started=$(date -u +%s)
-    if curl --silent --show-error --fail-with-body \
-      --connect-timeout "${AGC_CONNECT_TIMEOUT:-30}" --max-time "$upload_max_time" \
-      --http1.1 --header 'Expect:' \
-      --speed-limit 1024 --speed-time 60 \
-      --write-out 'AGC: uploaded %{size_upload} bytes at %{speed_upload} B/s in %{time_total}s\n' \
-      --request "$upload_method" \
-      ${upload_headers[@]+"${upload_headers[@]}"} \
-      --data-binary "@$file_path" \
-      "$upload_url" >&2; then
-      echo "AGC: upload finished in $(( $(date -u +%s) - upload_started ))s (object $object_id)" >&2
-      printf '%s\n' "$object_id"
-      return 0
+  parts_body='{}'
+  offset=0
+  for ((index = 1; index <= part_count; index++)); do
+    length=$(( file_size - offset ))
+    if (( length > part_size )); then
+      length="$part_size"
     fi
-    echo "AGC: upload attempt $attempt failed after $(( $(date -u +%s) - upload_started ))s" >&2
-    if (( attempt < upload_attempts )); then
-      sleep $((attempt * 15))
+    parts_body=$(jq -c --arg key "additionalProp$index" --argjson length "$length" \
+      '. + {($key): {sha256: "", length: $length}}' <<<"$parts_body")
+    offset=$(( offset + length ))
+  done
+
+  parts_response=$(curl --silent --show-error --fail-with-body \
+    "${curl_retrying[@]}" \
+    --request POST \
+    "$api_base/publish/v2/upload/multipart/parts?objectId=$(upload_query "$object_id")&nspUploadId=$(upload_query "$upload_id")" \
+    "${api_headers[@]}" \
+    --data "$parts_body")
+  check_ret "$parts_response"
+  echo "AGC: uploading $part_count part(s) of $((part_size / 1024 / 1024)) MiB, $upload_parallel at a time" >&2
+
+  offset=0
+  for ((index = 1; index <= part_count; index++)); do
+    length=$(( file_size - offset ))
+    if (( length > part_size )); then
+      length="$part_size"
+    fi
+    offset=$(( offset + length ))
+    part_key="additionalProp$index"
+    part_object_id=$(jq -r --arg key "$part_key" '.uploadInfoMap[$key].partObjectId // ""' <<<"$parts_response")
+    jq -r --arg key "$part_key" \
+      '.uploadInfoMap[$key].headers // {} | to_entries[] | "\(.key): \(.value)"' \
+      <<<"$parts_response" > "$work_dir/part-$index.headers"
+    printf '%s\n' "$part_object_id" > "$work_dir/part-$index.meta"
+    dd if="$file_path" of="$work_dir/part-$index.bin" bs="$part_size" skip=$((index - 1)) count=1 2>/dev/null
+  done
+
+  for ((index = 1; index <= part_count; index++)); do
+    (
+      set -e
+      local -a part_headers=()
+      while IFS= read -r header_line; do
+        part_headers+=(--header "$header_line")
+      done < "$work_dir/part-$index.headers"
+      url=$(jq -er --arg key "additionalProp$index" '.uploadInfoMap[$key].url // empty' \
+        <<<"$parts_response")
+      method=$(jq -r --arg key "additionalProp$index" '.uploadInfoMap[$key].method // "PUT"' \
+        <<<"$parts_response")
+      curl --silent --show-error --fail-with-body \
+        --connect-timeout "${AGC_CONNECT_TIMEOUT:-30}" --max-time "$upload_max_time" \
+        --http1.1 --header 'Expect:' \
+        --speed-limit 1024 --speed-time 60 \
+        --dump-header "$work_dir/part-$index.response" \
+        --output /dev/null \
+        --write-out "AGC: part $index uploaded %{size_upload} bytes at %{speed_upload} B/s in %{time_total}s\n" \
+        --request "$method" \
+        ${part_headers[@]+"${part_headers[@]}"} \
+        --data-binary "@$work_dir/part-$index.bin" \
+        "$url" >&2
+      awk 'tolower($1) == "etag:" { gsub(/[",\r]/, "", $2); print $2; exit }' \
+        "$work_dir/part-$index.response" > "$work_dir/part-$index.etag"
+    ) &
+    part_pids+=($!)
+    if (( ${#part_pids[@]} >= upload_parallel )); then
+      if ! wait "${part_pids[0]}"; then
+        echo "AGC: part upload failed; aborting the multipart upload" >&2
+        rm -rf "$work_dir"
+        exit 1
+      fi
+      part_pids=("${part_pids[@]:1}")
+    fi
+  done
+  for index in "${part_pids[@]+"${part_pids[@]}"}"; do
+    if ! wait "$index"; then
+      echo "AGC: part upload failed; aborting the multipart upload" >&2
+      rm -rf "$work_dir"
+      exit 1
     fi
   done
 
-  echo "AGC: upload failed after $upload_attempts attempts" >&2
-  exit 1
+  compose_body='{}'
+  for ((index = 1; index <= part_count; index++)); do
+    if [[ ! -s "$work_dir/part-$index.etag" ]]; then
+      echo "AGC: part $index reported no ETag; aborting the multipart upload" >&2
+      rm -rf "$work_dir"
+      exit 1
+    fi
+    part_object_id=$(cat "$work_dir/part-$index.meta")
+    etag=$(cat "$work_dir/part-$index.etag")
+    compose_body=$(jq -c --arg key "additionalProp$index" \
+      --arg part_object_id "$part_object_id" --arg etag "$etag" \
+      '. + {($key): {partObjectId: $part_object_id, etag: $etag}}' <<<"$compose_body")
+  done
+
+  compose_response=$(curl --silent --show-error --fail-with-body \
+    "${curl_bounded[@]}" \
+    --request POST \
+    "$api_base/publish/v2/upload/multipart/compose?objectId=$(upload_query "$object_id")&nspUploadId=$(upload_query "$upload_id")" \
+    "${api_headers[@]}" \
+    --data "$compose_body")
+  check_ret "$compose_response"
+  rm -rf "$work_dir"
+  echo "AGC: multipart upload composed (object $object_id)" >&2
+  printf '%s\n' "$object_id"
 }
 
 fetch_group_infos() {
