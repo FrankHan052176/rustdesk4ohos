@@ -119,11 +119,11 @@ upload_file() {
       upload_headers+=(--header "$header_name: $header_value")
     done < <(jq -c '.urlInfo.headers // {} | to_entries[]' <<<"$upload_url_response")
 
-    # The App Pack is ~24 MiB and a link that can reach the OBS bucket moves it in about two
-    # minutes; a runner that cannot is treated as unable to reach it, so each attempt is capped
-    # at four minutes instead of burning the job on a transfer that is not progressing.
-    # HTTP/1.1 without Expect: the OBS endpoint answers no HTTP/2 upload at all from these
-    # runners, and the 100-continue dance leaves the request open with zero bytes exchanged.
+    # The App Pack is ~24 MiB. Measured: a China-local link moves it in about two minutes at
+    # 230 KiB/s, while a GitHub-hosted runner reaches the app's China-region bucket at roughly
+    # 20 KiB/s, which needs about twenty minutes. AGC_UPLOAD_MAX_TIME_SECONDS bounds each
+    # attempt, --speed-limit/--speed-time cut a transfer that stops moving altogether, and the
+    # slot itself expires after about five minutes, so every attempt asks for a fresh one.
     echo "AGC: uploading to OBS ($upload_method, attempt $attempt/$upload_attempts)" >&2
     upload_started=$(date -u +%s)
     if curl --silent --show-error --fail-with-body \
