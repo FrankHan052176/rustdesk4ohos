@@ -33,7 +33,6 @@ env:
   CARGO_TERM_COLOR: always
   FLUTTER_OH_VERSION: 3.41.10-ohos-0.0.2-beta
   FLUTTER_RUST_BRIDGE_VERSION: 1.80.1
-  HOMEBREW_NO_AUTO_UPDATE: 1
   OHOS_COMMAND_LINE_TOOLS_VERSION: 6.1.1.280
   VERSION: ${{ inputs.version || '1.4.9' }}
 
@@ -81,15 +80,15 @@ jobs:
 
       # The SDK clone and its engine artifacts come from a Huawei-hosted CDN that has timed
       # out three times on these runners in one day; reuse them across runs. The key carries
-      # the run id so two concurrent runs never contend for one cache entry, and the restore
-      # key prefix picks up the newest SDK a previous run managed to save.
+      # the host OS and the run id: the cache is repository-wide, so a Linux run must never
+      # restore the darwin SDK a macOS run saved.
       - name: Restore the Flutter-OH SDK
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ runner.temp }}/flutter-ohos
-          key: flutter-ohos-${{ env.FLUTTER_OH_VERSION }}-${{ github.run_id }}
+          key: flutter-ohos-${{ runner.os }}-${{ env.FLUTTER_OH_VERSION }}-${{ github.run_id }}
           restore-keys: |
-            flutter-ohos-${{ env.FLUTTER_OH_VERSION }}-
+            flutter-ohos-${{ runner.os }}-${{ env.FLUTTER_OH_VERSION }}-
 
       - name: Install Flutter-OH and bridge generator
         shell: bash
@@ -286,7 +285,7 @@ jobs:
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ runner.temp }}/flutter-ohos
-          key: flutter-ohos-${{ env.FLUTTER_OH_VERSION }}-${{ github.run_id }}
+          key: flutter-ohos-${{ runner.os }}-${{ env.FLUTTER_OH_VERSION }}-${{ github.run_id }}
 
       - name: Remove OHOS release signing material
         if: always()

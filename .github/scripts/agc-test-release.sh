@@ -98,12 +98,14 @@ upload_file() {
   local length
   local part_key
   local part_object_id
+  local attempt
   local parts_body
   local parts_response
   local compose_body
   local compose_response
   local upload_max_time="${AGC_UPLOAD_MAX_TIME_SECONDS:-240}"
   local upload_parallel="${AGC_UPLOAD_PARALLEL:-4}"
+  local part_attempts="${AGC_UPLOAD_ATTEMPTS:-3}"
   local -a part_pids=()
 
   file_name=$(basename "$file_path")
@@ -178,19 +180,33 @@ upload_file() {
         <<<"$parts_response")
       method=$(jq -r --arg key "additionalProp$index" '.uploadInfoMap[$key].method // "PUT"' \
         <<<"$parts_response")
-      curl --silent --show-error --fail-with-body \
-        --connect-timeout "${AGC_CONNECT_TIMEOUT:-30}" --max-time "$upload_max_time" \
-        --http1.1 --header 'Expect:' \
-        --speed-limit 1024 --speed-time 60 \
-        --dump-header "$work_dir/part-$index.response" \
-        --output /dev/null \
-        --write-out "AGC: part $index uploaded %{size_upload} bytes at %{speed_upload} B/s in %{time_total}s\n" \
-        --request "$method" \
-        ${part_headers[@]+"${part_headers[@]}"} \
-        --data-binary "@$work_dir/part-$index.bin" \
-        "$url" >&2
-      awk 'tolower($1) == "etag:" { gsub(/[",\r]/, "", $2); print $2; exit }' \
-        "$work_dir/part-$index.response" > "$work_dir/part-$index.etag"
+      # A part that stalls is the only thing worth repeating: the slot was issued moments ago,
+      # so a short retry still falls inside its validity, and the parts already uploaded stay
+      # uploaded.
+      for ((attempt = 1; attempt <= part_attempts; attempt++)); do
+        if curl --silent --show-error --fail-with-body \
+          --connect-timeout "${AGC_CONNECT_TIMEOUT:-30}" --max-time "$upload_max_time" \
+          --http1.1 --header 'Expect:' \
+          --speed-limit 1024 --speed-time 60 \
+          --dump-header "$work_dir/part-$index.response" \
+          --output /dev/null \
+          --write-out "AGC: part $index attempt $attempt uploaded %{size_upload} bytes at %{speed_upload} B/s in %{time_total}s\n" \
+          --request "$method" \
+          ${part_headers[@]+"${part_headers[@]}"} \
+          --data-binary "@$work_dir/part-$index.bin" \
+          "$url" >&2; then
+          awk 'tolower($1) == "etag:" { gsub(/[",\r]/, "", $2); print $2; exit }' \
+            "$work_dir/part-$index.response" > "$work_dir/part-$index.etag"
+          exit 0
+        fi
+        if (( attempt < part_attempts )); then
+          echo "AGC: part $index attempt $attempt failed; retrying" >&2
+          sleep $((attempt * 10))
+        else
+          echo "AGC: part $index failed after $attempt attempts" >&2
+        fi
+      done
+      exit 1
     ) &
     part_pids+=($!)
     if (( ${#part_pids[@]} >= upload_parallel )); then
