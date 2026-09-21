@@ -98,7 +98,7 @@ upload_file() {
   for ((attempt = 1; attempt <= upload_attempts; attempt++)); do
     # Every attempt asks for its own upload slot: the pre-signed OBS URL expires, so reusing one
     # after a timeout is what turns a retry into a 403.
-    echo "AGC: requesting an upload slot for $file_name ($((file_size / 1024 / 1024)) MiB)"
+    echo "AGC: requesting an upload slot for $file_name ($((file_size / 1024 / 1024)) MiB)" >&2
     upload_url_response=$(curl --silent --show-error --fail-with-body \
       "${curl_retrying[@]}" \
       --get "$api_base/publish/v2/upload-url/for-obs" \
@@ -121,7 +121,7 @@ upload_file() {
 
     # HTTP/1.1 without Expect: the OBS endpoint answers no HTTP/2 upload at all from these
     # runners, and the 100-continue dance leaves the request open with zero bytes exchanged.
-    echo "AGC: uploading to OBS ($upload_method, attempt $attempt/$upload_attempts)"
+    echo "AGC: uploading to OBS ($upload_method, attempt $attempt/$upload_attempts)" >&2
     upload_started=$(date -u +%s)
     if curl --silent --show-error --fail-with-body \
       --connect-timeout "${AGC_CONNECT_TIMEOUT:-30}" --max-time "$upload_max_time" \
@@ -131,8 +131,8 @@ upload_file() {
       --request "$upload_method" \
       ${upload_headers[@]+"${upload_headers[@]}"} \
       --data-binary "@$file_path" \
-      "$upload_url"; then
-      echo "AGC: upload finished in $(( $(date -u +%s) - upload_started ))s (object $object_id)"
+      "$upload_url" >&2; then
+      echo "AGC: upload finished in $(( $(date -u +%s) - upload_started ))s (object $object_id)" >&2
       printf '%s\n' "$object_id"
       return 0
     fi
