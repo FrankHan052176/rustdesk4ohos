@@ -88,8 +88,8 @@ upload_file() {
   local -a upload_headers=()
   local attempt
   local upload_started
-  local upload_max_time="${AGC_UPLOAD_MAX_TIME_SECONDS:-900}"
-  local upload_attempts="${AGC_UPLOAD_ATTEMPTS:-3}"
+  local upload_max_time="${AGC_UPLOAD_MAX_TIME_SECONDS:-3600}"
+  local upload_attempts="${AGC_UPLOAD_ATTEMPTS:-2}"
 
   file_name=$(basename "$file_path")
   file_size=$(wc -c < "$file_path" | tr -d ' ')
@@ -127,10 +127,11 @@ upload_file() {
       --connect-timeout "${AGC_CONNECT_TIMEOUT:-30}" --max-time "$upload_max_time" \
       --http1.1 --header 'Expect:' \
       --speed-limit 1024 --speed-time 60 \
+      --write-out 'AGC: uploaded %{size_upload} bytes at %{speed_upload} B/s in %{time_total}s\n' \
       --request "$upload_method" \
       ${upload_headers[@]+"${upload_headers[@]}"} \
       --data-binary "@$file_path" \
-      "$upload_url" >/dev/null; then
+      "$upload_url"; then
       echo "AGC: upload finished in $(( $(date -u +%s) - upload_started ))s (object $object_id)"
       printf '%s\n' "$object_id"
       return 0
