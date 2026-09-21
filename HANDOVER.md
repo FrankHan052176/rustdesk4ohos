@@ -68,7 +68,7 @@ zc        /Volumes/RustDeskBuildCache/native-workspace/R_RustDesk-Core
 flutter-nightly.yml       cron "0 0 * * *" + workflow_dispatch
   └─ flutter-build.yml    全平台矩阵 + generate-bridge + OHOS job
        ├─ bridge.yml                生成两个 bridge 产物
-       └─ flutter-ohos.yml          OHOS 腿（macos-15，timeout 90min）
+       └─ flutter-ohos.yml          OHOS 腿（ubuntu-22.04，timeout 90min）
 ```
 
 - `flutter-build.yml` 的 `workflow_call` 输入：`upload-artifact`、`upload-agc`、`upload-tag`。

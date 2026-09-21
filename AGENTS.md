@@ -57,7 +57,7 @@ way; `HANDOVER.md` is the longer narrative and its §6/§8 are superseded by thi
 ### CI
 
 * `flutter-nightly.yml` → `flutter-build.yml` → `{bridge.yml, flutter-ohos.yml}`. The OHOS leg
-  (`flutter-ohos.yml`, macos-15) builds the signed App Pack, uploads the unsigned HAP and submits
+  (`flutter-ohos.yml`, ubuntu-22.04) builds the signed App Pack, uploads the unsigned HAP and submits
   the AppGallery Connect test version.
 * AppGallery keeps one invitation-test version under review at a time. A second submission inside
   that window fails with `the versionName and versionCode of the pkg is same with other pkg in use`
