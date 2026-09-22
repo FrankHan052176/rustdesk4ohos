@@ -10,6 +10,8 @@ on:
       - main
     paths-ignore:
       - ".github/**"
+      - "AGENTS.md"
+      - "HANDOVER.md"
       - "docs/**"
       - "README.md"
       - "res/**"

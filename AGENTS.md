@@ -49,8 +49,9 @@ way; `HANDOVER.md` is the longer narrative and its §6/§8 are superseded by thi
 * `settings_ui`, `flex_color_picker` and `xterm` point at forks. Keep the **standard** refs
   committed; `scripts/prepare-ohos-flutter.py` swaps them to the OHOS refs inside the OHOS leg.
   Committing the swapped output makes every other leg compile HarmonyOS-only `TargetPlatform.ohos`
-  and die in `kernel_snapshot_program`. `--check`, run by the `verify-dependency-state` job in
-  `flutter-build.yml` (which also runs the preparer's unit test), catches exactly that.
+  and die in `kernel_snapshot_program`. `--check`, run by the `verify-dependency-state` job, catches
+  exactly that. The job now lives in `flutter-build.yml` (for the parked matrix) **and** as the gate
+  in front of `flutter-release.yml`, which is the path that actually runs today.
 * `extended_text: ^14.2.0` and `google_fonts: ^6.2.1` are the only values the 3.24.5 legs and the
   OHOS preparer both accept.
 
@@ -62,9 +63,26 @@ way; `HANDOVER.md` is the longer narrative and its §6/§8 are superseded by thi
   platforms stay parked in `flutter-build.yml`, whose `verify-dependency-state` gate this workflow
   mirrors before building.
 * AppGallery keeps one invitation-test version under review at a time. A second submission inside
-  that window fails with `the versionName and versionCode of the pkg is same with other pkg in use`
-  (or `the count of harmony test in audit is up to the limit`). That is a server-side window, not a
-  build fault: serialise submissions rather than chasing it in the workflow.
+  that window fails with `the versionName and versionCode of the pkg is same with other pkg in use`,
+  `the count of harmony test in audit is up to the limit`, or - the wording that wasted a day here -
+  `[AMIS] submit version for review failed ... [AppGalleryConnectAppMetaInfoService]beta api not
+  allowed to submit`. That last one is **not** a verdict on the build's SDK: the same Beta2 pack
+  submitted successfully minutes after that message, and a repeat submission was refused again while
+  the first version sat in review. Treat all three as the same server-side window, serialise
+  submissions rather than chasing them in the workflow.
+* The App Pack reaches AppGallery in parts. `agc-test-release.sh` uses the documented multipart API
+  (`publish/v2/upload/multipart/{init,parts,compose}`) with four parts in flight and three attempts
+  per part. A single PUT is bound to one pre-signed slot that expires after about five minutes -
+  which is why the old path failed on a slow link and then answered 403 on retry. Knobs:
+  `AGC_UPLOAD_MAX_TIME_SECONDS` (per part, default 240), `AGC_UPLOAD_PARALLEL` (default 4),
+  `AGC_UPLOAD_ATTEMPTS` (default 3).
+* The app's bucket is in the China region (`nsp-appgallery-agcfs-drcn.obs.cn-north-2.myhuaweicloud.cn`,
+  object paths start with `CN/`), so the runner's route to it decides the upload. Measured on the
+  same 24 MiB pack: macOS runner ~22 KB/s on one connection (~20 min, never finished), ubuntu runner
+  ~130 KB/s per part with four in flight (~70 s in total), China-local link ~208 KB/s (~100 s).
+  That is why the leg runs on ubuntu; `chineseMainlandFlag` and the API domain are not region knobs.
+* `flutter-release.yml` holds concurrency group `flutter-release` with `cancel-in-progress: false`,
+  so two pushes queue instead of racing for the same submission slot.
 * Every submission still needs a fresh `versionCode`, and exactly one layer reaches the packaged
   App: the Flutter tool. `flutter_tools` copies the pubspec's `version:` into `AppScope/app.json5`,
   and hvigor's flutter plugin then writes `local.properties`' `flutter.versionCode` into the
@@ -76,7 +94,9 @@ way; `HANDOVER.md` is the longer narrative and its §6/§8 are superseded by thi
   the committed baseline. `pack.info ... versionCode=` in the leg log is the proof.
 * The Flutter-OH SDK (gitcode clone + Huawei OBS dart/engine zips) fails intermittently from GitHub
   runners with `curl: (6) Could not resolve host: flutter-ohos.obs.cn-south-1.myhuaweicloud.com`.
-  Keep the `Restore/Save the Flutter-OH SDK` cache steps and the provisioning/packaging retries.
+  Keep the `Restore/Save the Flutter-OH SDK` cache steps and the provisioning/packaging retries. The
+  key carries `${{ runner.os }}` next to the version and run id: the cache is repository-wide, so a
+  Linux run must never restore the darwin SDK a macOS run saved.
 
 ### HarmonyOS client behaviour
 
@@ -114,6 +134,10 @@ way; `HANDOVER.md` is the longer narrative and its §6/§8 are superseded by thi
 
 ### Store listing
 
+* The store icon is the shipped app icon (official artwork, rounded canvas, `非官方` badge) exported
+  at the two sizes AppGallery asks for: `store-listing/zh-CN/icon-1024.png` (square 1024x1024, PNG
+  under 3 MB) and `store-listing/zh-CN/icon-1024.webp` (WebP under 100 KB). Regenerate both from
+  `res/gen_ohos_icon.py`'s output with `--preview`/a fresh export whenever the icon changes.
 * `store-listing/zh-CN/artwork/index.html` renders the promo posters at exactly 1080x1920, 1920x1280
   and 1920x1080 (`?scene=quality|keyboard|pointer&format=phone|tablet|landscape`); `overview.html`
   renders the 1600x1880 contact sheet. After editing, re-render the nine exports, refresh

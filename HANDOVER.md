@@ -193,13 +193,11 @@ gh run view <RUN_ID> --repo rustdesk/rustdesk --json jobs | head -5
 
 ## 8. 未完成事项与已知问题
 
-1. **两条 nightly 在写文档时仍在跑**，接手第一件事是确认结论：
-   - `35044623413` @ `cb01472d2`：OHOS 腿**失败**（`Resolve Flutter dependencies`，preparer 断言，已由 `abcb8e203` 修）；其余平台腿当时仍在跑。
-   - `35045057983` @ `abcb8e203`：修复后的完整验证，排队中。
-2. 平台腿（linux aarch64/sciter、ios、darwin、android 等）的**长期红腿**根因已定位为 §6 的 pubspec 约束问题；修好后需要**一轮完整 nightly 确认**，不要凭单条腿下结论。
-3. `flutter/pubspec.lock` 落后于 pubspec（§6 末）。
-4. `libs/hbb_common` 子模块指针是 `ded7f72a18fcc53380a2c33acfc68d44aef878a2`（内容为 `Merge rustdesk/hbb_common 29cf7cbe into ohos/core`），**有意**不同于上游指针 `29cf7cbe`；checkout 阶段的 `Git commit id not found.` 是非致命告警，不代表构建失败。
-5. AGC 测试版本一旦提交即占用测试窗口（默认 60 天）；重复提交会产生新的 version，旧的可自行在 AGC 后台下架。
+1. **其他平台腿处于停用状态**：`flutter-build.yml` 的全平台矩阵目前没有调用方（`flutter-release.yml` 直接调 `flutter-ohos.yml`），`flutter-ci.yml` 只保留手动/PR 触发且不产出。要恢复就把 `flutter-release.yml` 的 `uses:` 改回 `flutter-build.yml` 并补回输入。
+2. **平台腿此前的长期红腿根因是 §6 的 pubspec 约束问题**（已由 `49d03258e` 修复：committed 值回到 `^14.2.0`/`^6.2.1`）；恢复矩阵后需要一轮完整运行确认，不要凭单条腿下结论。
+3. **AGC 提交窗口**：同一应用一次只允许一个邀请测试版本在审。窗口内再次提交会被拒（文案见 `AGENTS.md`，其中 `beta api not allowed to submit` 极易被误判成 SDK 问题，实为窗口占用）。同日再发版需先结束/下架在审版本，或让脚本用 `AGC_LOCAL_CLEANUP_AFTER_SUBMIT=1` 自动 stop+delete。
+4. `flutter/pubspec.lock` 落后于 pubspec（§6 末）。两条 Windows 锁定工作流各自钉住自己的 `SOURCE_SHA`，读的是那个提交的 manifest，因此不受 main 上 pubspec 值影响——不要为它们改动 main。
+5. `libs/hbb_common` 子模块指针是 `ded7f72a18fcc53380a2c33acfc68d44aef878a2`（内容为 `Merge rustdesk/hbb_common 29cf7cbe into ohos/core`），**有意**不同于上游指针 `29cf7cbe`；checkout 阶段的 `Git commit id not found.` 是非致命告警，不代表构建失败。
 6. 本工作区的 `AGENTS.md` 是代码风格与 Rust/Tokio/本地化规则，改 `src/`、`libs/`、`src/lang/` 前先读它。
 
 ## 9. 回滚
@@ -212,7 +210,7 @@ gh run view <RUN_ID> --repo rustdesk/rustdesk --json jobs | head -5
 | 回退整个 OHOS 合并 | `git revert -m 1 18fa131db`（保留 AGC 脚本则按文件回退） |
 | 上游同步 | `git fetch upstream && git merge upstream/master`，冲突集中在 `flutter/` 与 CI |
 
-回滚后同样要跑一轮 nightly 验证。
+回滚后同样要跑一轮完整发布流水线验证。
 
 ## 10. 关键文件索引
 
