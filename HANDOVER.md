@@ -10,7 +10,7 @@
 
 1. 本工作区 = **RustDesk 上游仓库的 fork**（Rust 内核 + Flutter 前端 + 全部 CI），在它上面叠了 HarmonyOS/AGC 的发布链；`main` 是"RustDesk Unofficial"主线。
 2. **最容易踩的坑是依赖约束**：`flutter/pubspec.yaml` 的同一份值要同时被 Flutter 3.24.5、3.44 和 Flutter-OH 3.41 三条腿接受，后两者靠脚本在构建时现场改写（§6）。
-3. 改 CI 后**必须跑一次完整 nightly** 才算验证过（§7），不要只看单条腿。
+3. 改 CI 后**必须跑一次完整流水线**才算验证过（§7），不要只看单条腿。
 
 ## 1. 工作区与远端
 
@@ -65,15 +65,14 @@ zc        /Volumes/RustDeskBuildCache/native-workspace/R_RustDesk-Core
 ### 触发链
 
 ```
-flutter-nightly.yml       cron "0 0 * * *" + workflow_dispatch
-  └─ flutter-build.yml    全平台矩阵 + generate-bridge + OHOS job
-       ├─ bridge.yml                生成两个 bridge 产物
-       └─ flutter-ohos.yml          OHOS 腿（ubuntu-22.04，timeout 90min）
+flutter-release.yml       push(main) + workflow_dispatch
+  ├─ verify-dependency-state      committed pubspec 守卫（preparer 单测 + --check）
+  └─ flutter-ohos.yml             OHOS 腿（ubuntu-22.04，timeout 90min）
 ```
 
-- `flutter-build.yml` 的 `workflow_call` 输入：`upload-artifact`、`upload-agc`、`upload-tag`。
+- 发布由**新提交触发**（原 `flutter-nightly.yml` 的每日定时已取消）；其他平台腿仍在 `flutter-build.yml` 中停用。
 - `flutter-ohos.yml` 的输入：`upload-artifact`（默认 true）、`publish-release`（默认 false）、`upload-agc`（默认 false）、`upload-tag`（默认 `nightly`）、`version`（默认 `1.4.9`）。
-- 手动重跑：`gh workflow run flutter-nightly.yml --repo FrankHan052176/rustdesk4ohos --ref main`。
+- 手动重跑：`gh workflow run flutter-release.yml --repo FrankHan052176/rustdesk4ohos --ref main`。
 
 ### 版本矩阵（`flutter-build.yml` env）
 
@@ -172,8 +171,8 @@ cp .github/patches/apply_flutter_3.44_source_patches.sh "$T/.github/patches/"
 ## 7. 日常操作
 
 ```bash
-# 触发整条 nightly（全平台 + OHOS）
-gh workflow run flutter-nightly.yml --repo FrankHan052176/rustdesk4ohos --ref main
+# 手动触发一次发布构建（新提交会自动触发；全平台矩阵仍在 flutter-build.yml 中停用）
+gh workflow run flutter-release.yml --repo FrankHan052176/rustdesk4ohos --ref main
 
 # 看某条 run 每条腿的结论
 gh run view <RUN_ID> --repo FrankHan052176/rustdesk4ohos \
@@ -219,7 +218,7 @@ gh run view <RUN_ID> --repo rustdesk/rustdesk --json jobs | head -5
 
 | 路径 | 作用 |
 | --- | --- |
-| `.github/workflows/flutter-nightly.yml` | 夜间/手动入口 |
+| `.github/workflows/flutter-release.yml` | 发布入口：push(main) 触发，含依赖守卫 + OHOS 链 |
 | `.github/workflows/flutter-build.yml` | 全平台矩阵 + OHOS job 装配 |
 | `.github/workflows/flutter-ohos.yml` | OHOS 腿：签名、AGC、HAP 产物与 Release |
 | `.github/workflows/bridge.yml` | 两套 bridge 产物（3.22.3 / 3.44.8） |

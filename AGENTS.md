@@ -56,9 +56,11 @@ way; `HANDOVER.md` is the longer narrative and its §6/§8 are superseded by thi
 
 ### CI
 
-* `flutter-nightly.yml` → `flutter-build.yml` → `{bridge.yml, flutter-ohos.yml}`. The OHOS leg
-  (`flutter-ohos.yml`, ubuntu-22.04) builds the signed App Pack, uploads the unsigned HAP and submits
-  the AppGallery Connect test version.
+* `flutter-release.yml` runs on every push to main (the scheduled nightly run is gone) and calls
+  `flutter-ohos.yml` directly: the OHOS leg (`flutter-ohos.yml`, ubuntu-22.04) builds the signed App
+  Pack, uploads the unsigned HAP and submits the AppGallery Connect test version. The other
+  platforms stay parked in `flutter-build.yml`, whose `verify-dependency-state` gate this workflow
+  mirrors before building.
 * AppGallery keeps one invitation-test version under review at a time. A second submission inside
   that window fails with `the versionName and versionCode of the pkg is same with other pkg in use`
   (or `the count of harmony test in audit is up to the limit`). That is a server-side window, not a

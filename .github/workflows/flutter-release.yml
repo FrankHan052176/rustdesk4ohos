@@ -1,0 +1,43 @@
+name: Flutter Release Build
+
+# A new commit to main is what ships a build: the scheduled nightly run is gone, because the
+# repository is not written to every day. The workflow calls the OpenHarmony workflow directly
+# and submits the signed App Pack to AppGallery Connect; the other platforms stay parked in
+# flutter-build.yml for as long as the HarmonyOS leg is the one under test.
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - ".github/**"
+      - "docs/**"
+      - "README.md"
+      - "res/**"
+      - "appimage/**"
+      - "flatpak/**"
+  workflow_dispatch:
+
+jobs:
+  # The gate that caught the dependency regression: the committed pubspec has to stay on the
+  # values every leg resolves, so it runs before anything is built or submitted.
+  verify-dependency-state:
+    name: Verify the committed dependency state
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Verify the dependency selection
+        shell: bash
+        run: |
+          python3 scripts/test_prepare_ohos_flutter.py
+          python3 scripts/prepare-ohos-flutter.py --check
+
+  build-and-release:
+    needs: verify-dependency-state
+    uses: ./.github/workflows/flutter-ohos.yml
+    secrets: inherit
+    with:
+      upload-artifact: true
+      publish-release: true
+      upload-agc: true
+      upload-tag: "nightly"
+      version: "1.4.9"

@@ -1,25 +1,15 @@
 name: Full Flutter CI
 
-# OHOS-only scope while the HarmonyOS pipeline is brought back to green: this
-# calls the OpenHarmony workflow directly instead of the multi-platform
-# flutter-build.yml. Restore the flutter-build.yml call once the OHOS leg passes
-# again, so pushes keep checking every platform.
+# Dormant entry point, kept for the multi-platform matrix: pushes are handled by
+# flutter-release.yml, which runs the OpenHarmony workflow and submits the App Pack to
+# AppGallery Connect, and the other platforms stay parked in flutter-build.yml. Restore the
+# flutter-build.yml call here (with its full matrix) when those platforms come back.
 on:
   workflow_dispatch:
   pull_request:
     paths-ignore:
     - "docs/**"
     - "README.md"
-  push:
-    branches:
-      - main
-    paths-ignore:
-      - ".github/**"
-      - "docs/**"
-      - "README.md"
-      - "res/**"
-      - "appimage/**"
-      - "flatpak/**"
 
 jobs:
   run-ci:
