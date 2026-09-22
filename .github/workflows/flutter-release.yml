@@ -17,6 +17,12 @@ on:
       - "flatpak/**"
   workflow_dispatch:
 
+# Two pushes inside one build window would race for the same AppGallery Connect submission
+# slot, so queue them instead of cancelling or overlapping.
+concurrency:
+  group: flutter-release
+  cancel-in-progress: false
+
 jobs:
   # The gate that caught the dependency regression: the committed pubspec has to stay on the
   # values every leg resolves, so it runs before anything is built or submitted.
